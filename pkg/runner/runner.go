@@ -32,6 +32,7 @@ type Config struct {
 	Platforms       map[string]string // list of platforms
 	Privileged      bool              // use privileged mode
 	UsernsMode      string            // user namespace to use
+	Ref             string            // custom ref to use during workflow
 }
 
 type runnerImpl struct {

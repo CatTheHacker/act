@@ -26,6 +26,7 @@ type Input struct {
 	defaultBranch   string
 	privileged      bool
 	usernsMode      string
+	ref             string
 }
 
 func (i *Input) resolve(path string) string {

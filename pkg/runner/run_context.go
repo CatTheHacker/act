@@ -453,6 +453,7 @@ func (rc *RunContext) getGithubContext() *githubContext {
 		Token:     token,
 		Workspace: "/github/workspace",
 		Action:    rc.CurrentStep,
+		Ref:       rc.Config.Ref,
 	}
 
 	// Backwards compatibility for configs that require
@@ -476,13 +477,6 @@ func (rc *RunContext) getGithubContext() *githubContext {
 		ghc.Sha = sha
 	}
 
-	ref, err := common.FindGitRef(repoPath)
-	if err != nil {
-		log.Warningf("unable to get git ref: %v", err)
-	} else {
-		log.Debugf("using github ref: %s", ref)
-		ghc.Ref = ref
-	}
 	if rc.EventJSON != "" {
 		err = json.Unmarshal([]byte(rc.EventJSON), &ghc.Event)
 		if err != nil {
@@ -500,6 +494,20 @@ func (rc *RunContext) getGithubContext() *githubContext {
 	if ghc.EventName == "pull_request" {
 		ghc.BaseRef = asString(nestedMapLookup(ghc.Event, "pull_request", "base", "ref"))
 		ghc.HeadRef = asString(nestedMapLookup(ghc.Event, "pull_request", "head", "ref"))
+	}
+
+	if ghc.Ref == "" {
+		if ghc.EventName == "push" && asString(nestedMapLookup(ghc.Event, "ref")) != "" {
+			ghc.Ref = asString(nestedMapLookup(ghc.Event, "ref"))
+		} else {
+			ref, err := common.FindGitRef(repoPath)
+			if err != nil {
+				log.Warningf("unable to get git ref: %v", err)
+			} else {
+				log.Debugf("using github ref: %s", ref)
+				ghc.Ref = ref
+			}
+		}
 	}
 
 	return ghc
