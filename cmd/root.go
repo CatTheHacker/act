@@ -11,16 +11,23 @@ import (
 
 	"github.com/nektos/act/pkg/common"
 
-	"github.com/AlecAivazis/survey/v2"
 	"github.com/andreaskoch/go-fswatch"
 	"github.com/joho/godotenv"
 	"github.com/mitchellh/go-homedir"
 	gitignore "github.com/sabhiram/go-gitignore"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+
+	"github.com/AlecAivazis/survey/v2"
 
 	"github.com/nektos/act/pkg/model"
 	"github.com/nektos/act/pkg/runner"
+)
+
+var (
+	Config  *viper.Viper
+	cfgFile string
 )
 
 // Execute is the entry point to running the CLI
@@ -217,24 +224,6 @@ func newRunCommand(ctx context.Context, input *Input) func(*cobra.Command, []str
 			return err
 		}
 
-		// Check if platforms flag is set, if not, run default image survey
-		if len(input.platforms) == 0 {
-			cfgFound := false
-			cfgLocations := configLocations()
-			for _, v := range cfgLocations {
-				_, err := os.Stat(v)
-				if os.IsExist(err) {
-					cfgFound = true
-				}
-			}
-			if !cfgFound && len(cfgLocations) > 0 {
-				if err := defaultImageSurvey(cfgLocations[0]); err != nil {
-					log.Fatal(err)
-				}
-				input.platforms = readArgsFile(cfgLocations[0])
-			}
-		}
-
 		// run the plan
 		config := &runner.Config{
 			Actor:                 input.actor,
@@ -268,49 +257,6 @@ func newRunCommand(ctx context.Context, input *Input) func(*cobra.Command, []str
 
 		return r.NewPlanExecutor(plan)(ctx)
 	}
-}
-
-func defaultImageSurvey(actrc string) error {
-	var answer string
-	confirmation := &survey.Select{
-		Message: "Please choose the default image you want to use with act:\n\n  - Large size image: +20GB Docker image, includes almost all tools used on GitHub Actions (IMPORTANT: currently only ubuntu-18.04 platform is available)\n  - Medium size image: ~500MB, includes only necessary tools to bootstrap actions and aims to be compatible with all actions\n  - Micro size image: <200MB, contains only NodeJS required to bootstrap actions, doesn't work with all actions\n\nDefault image and other options can be changed manually in ~/.actrc (please refer to https://github.com/nektos/act#configuration for additional information about file structure)",
-		Help:    "If you want to know why act asks you that, please go to https://github.com/nektos/act/issues/107",
-		Default: "Medium",
-		Options: []string{"Large", "Medium", "Micro"},
-	}
-
-	err := survey.AskOne(confirmation, &answer)
-	if err != nil {
-		return err
-	}
-
-	var option string
-	switch answer {
-	case "Large":
-		option = "-P ubuntu-18.04=nektos/act-environments-ubuntu:18.04"
-	case "Medium":
-		option = "-P ubuntu-latest=catthehacker/ubuntu:act-latest\n-P ubuntu-20.04=catthehacker/ubuntu:act-20.04\n-P ubuntu-18.04=catthehacker/ubuntu:act-18.04\nubuntu-16.04=catthehacker/ubuntu:act-16.04"
-	case "Micro":
-		option = "-P ubuntu-latest=node:12.20.1-buster-slim\n-P ubuntu-20.04=node:12.20.1-buster-slim\n-P ubuntu-18.04=node:12.20.1-buster-slim\n-P ubuntu-16.04=node:12.20.1-stretch-slim"
-	}
-
-	f, err := os.Create(actrc)
-	if err != nil {
-		return err
-	}
-
-	_, err = f.WriteString(option)
-	if err != nil {
-		_ = f.Close()
-		return err
-	}
-
-	err = f.Close()
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func watchAndRun(ctx context.Context, fn common.Executor) error {
@@ -355,4 +301,77 @@ func watchAndRun(ctx context.Context, fn common.Executor) error {
 	<-ctx.Done()
 	folderWatcher.Stop()
 	return err
+}
+
+func init() {
+	cobra.OnInitialize(initConfig)
+}
+
+func initConfig() {
+	Config = viper.NewWithOptions(viper.KeyDelimiter(`::`))
+
+	if cfgFile != "" {
+		Config.SetConfigFile(cfgFile)
+	} else {
+		Config.AddConfigPath(filepath.Join(os.Getenv("HOME"), ".config", "act"))
+		Config.AddConfigPath(".")
+		Config.SetConfigType("yaml")
+		Config.SetConfigName("config")
+	}
+
+	Config.AutomaticEnv()
+
+	if err := Config.ReadInConfig(); err == nil {
+		log.Printf("Config: %s", Config.ConfigFileUsed())
+	} else {
+		cfgPath := filepath.Join(os.Getenv("HOME"), ".config", "act")
+		log.Debugf("Config not found. Creating...")
+
+		if err := os.MkdirAll(cfgPath, 0644); err != nil {
+			log.Error(err)
+		}
+		cfgPath = filepath.Join(cfgPath, "config.yaml")
+		Config.SetConfigFile(cfgPath)
+		if err := Config.SafeWriteConfig(); err != nil {
+			log.Fatal(err)
+		}
+
+		answer := ""
+		confirmation := &survey.Select{
+			Message: "Please choose the default image you want to use with act:\n\n  - Large size image: +20GB Docker image, includes almost all tools used on GitHub Actions (only ubuntu-latest/ubuntu-18.04 platform is available)\n  - Medium size image: ~1GB, includes only necessary tools to bootstrap actions and aims to be compatible with all actions\n  - Micro size image: <200MB, contains only NodeJS required to bootstrap actions, doesn't work with all actions\n\nDefault image and other options can be changed manually in: " + cfgPath,
+			Help:    "If you want to know why act asks you that, please go to https://github.com/nektos/act/issues/107",
+			Default: "Medium",
+			Options: []string{"Large", "Medium", "Micro"},
+		}
+
+		err = survey.AskOne(confirmation, &answer)
+		if err != nil {
+			log.Error(err)
+			os.Exit(1)
+		}
+
+		switch answer {
+		case "Large":
+			Config.Set(`images`, map[string]string{
+				`ubuntu-18.04`: `nektos/act-environments-ubuntu:18.04`,
+			})
+		case "Medium":
+			Config.Set(`images`, map[string]string{
+				`ubuntu-latest`: `catthehacker/ubuntu:act-latest`,
+				`ubuntu-20.04`:  `catthehacker/ubuntu:act-20.04`,
+				`ubuntu-18.04`:  `catthehacker/ubuntu:act-18.04`,
+				`ubuntu-16.04`:  `catthehacker/ubuntu:act-16.04`,
+			})
+		case "Micro":
+			Config.Set(`images`, map[string]string{
+				`ubuntu-latest`: `node:lts-buster`,
+				`ubuntu-20.04`:  `node:lts-buster`,
+				`ubuntu-18.04`:  `node:lts-buster`,
+				`ubuntu-16.04`:  `node:lts-stretch`,
+			})
+		}
+		if err := Config.WriteConfig(); err != nil {
+			log.Fatal(err)
+		}
+	}
 }
