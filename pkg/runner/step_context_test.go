@@ -8,9 +8,6 @@ import (
 )
 
 func TestStepContextExecutor(t *testing.T) {
-	platforms := map[string]string{
-		"ubuntu-latest": baseImage,
-	}
 	tables := []TestJobFileInfo{
 		{"testdata", "uses-and-run-in-one-step", "push", "Invalid run/uses syntax for job:test step:Test", platforms, ""},
 		{"testdata", "uses-github-empty", "push", "Expected format {org}/{repo}[/path]@ref", platforms, ""},

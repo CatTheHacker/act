@@ -75,6 +75,12 @@ type Container interface {
 	Remove() common.Executor
 }
 
+type containerReference struct {
+	cli   *client.Client
+	id    string
+	input *NewContainerInput
+}
+
 // NewContainer creates a reference to a container
 func NewContainer(input *NewContainerInput) Container {
 	cr := new(containerReference)
@@ -186,12 +192,6 @@ func (cr *containerReference) Remove() common.Executor {
 	).Finally(
 		cr.remove(),
 	).IfNot(common.Dryrun)
-}
-
-type containerReference struct {
-	cli   *client.Client
-	id    string
-	input *NewContainerInput
 }
 
 func GetDockerClient(ctx context.Context) (*client.Client, error) {

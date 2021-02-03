@@ -65,6 +65,18 @@ func (rc *RunContext) jobContainerName() string {
 	return createContainerName("act", rc.String())
 }
 
+func (rc *RunContext) startJobHost() common.Executor {
+	return func(ctx context.Context) error {
+		rc.JobContainer = container.NewHost(&container.NewHostInput{
+			WorkingDir: rc.Config.Workdir,
+		})
+
+		return common.NewPipelineExecutor(
+			rc.JobContainer.Create(),
+		)(ctx)
+	}
+}
+
 // Returns the binds and mounts for the container, resolving paths as appopriate
 func (rc *RunContext) GetBindsAndMounts() ([]string, map[string]string) {
 	name := rc.jobContainerName()
@@ -95,7 +107,7 @@ func (rc *RunContext) GetBindsAndMounts() ([]string, map[string]string) {
 }
 
 func (rc *RunContext) startJobContainer() common.Executor {
-	image, err := rc.platformImage()
+	platform, err := rc.platformImage()
 
 	if err != nil {
 		log.Errorf("\U0001F6A7  Unable to run on missing image for platform '%+v'", rc.Run.Job().Name)
@@ -127,7 +139,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			Cmd:         nil,
 			Entrypoint:  []string{"/usr/bin/tail", "-f", "/dev/null"},
 			WorkingDir:  rc.Config.ContainerWorkdir(),
-			Image:       image,
+			Image:       platform.Image,
 			Username:    rc.Config.Secrets["DOCKER_USERNAME"],
 			Password:    rc.Config.Secrets["DOCKER_PASSWORD"],
 			Name:        name,
@@ -220,9 +232,9 @@ func (rc *RunContext) Executor() common.Executor {
 
 	platform := rc.extractPlatform()
 
-	if platform.Engine == model.PlatformEngineDocker {
+	if !platform.UseHost {
 		steps = append(steps, rc.startJobContainer())
-	} else if platform.Engine == model.PlatformEngineHost {
+	} else {
 		steps = append(steps, rc.startJobHostContainer())
 	}
 
@@ -233,7 +245,7 @@ func (rc *RunContext) Executor() common.Executor {
 		steps = append(steps, rc.newStepExecutor(step))
 	}
 
-	if platform.Engine == model.PlatformEngineDocker {
+	if !platform.UseHost {
 		steps = append(steps, rc.stopJobContainer())
 	}
 
@@ -295,9 +307,7 @@ func (rc *RunContext) newStepExecutor(step *model.Step) common.Executor {
 }
 
 func (rc *RunContext) runsOnContainer() bool {
-	platform := rc.extractPlatform()
-
-	if platform.Engine == model.PlatformEngineDocker {
+	if !rc.extractPlatform().UseHost {
 		return true
 	}
 
@@ -305,57 +315,43 @@ func (rc *RunContext) runsOnContainer() bool {
 }
 
 func (rc *RunContext) runsOnHost() bool {
-	platform := rc.extractPlatform()
-
-	if platform.Engine == model.PlatformEngineHost {
+	if rc.extractPlatform().UseHost {
 		return true
 	}
 
 	return false
 }
 
-func (rc *RunContext) extractRunsOn() string {
-	job := rc.Run.Job()
-
-	runsOn := job.RunsOn()
-
-	if len(runsOn) > 0 {
-		log.Infof("\U0001F6A7  Multiple 'runs-on' detected: will run only on: '%+v'", runsOn[0])
-	}
-
-	return runsOn[0]
-}
-
 func (rc *RunContext) extractPlatform() *model.Platform {
-	runsOn := rc.extractRunsOn()
 
-	platformName := rc.ExprEval.Interpolate(runsOn)
-	platform := rc.Config.Platforms[strings.ToLower(platformName)]
-
-	return platform
+	return &model.Platform{
+		Platform: "",
+		UseHost:  false,
+		Image:    "",
+	}
 }
 
-func (rc *RunContext) platformImage() (string, error) {
+func (rc *RunContext) platformImage() (*model.Platform, error) {
 	job := rc.Run.Job()
 
 	c := job.Container()
 	if c != nil {
-		return c.Image, nil
+		return &model.Platform{Image: rc.ExprEval.Interpolate(c.Image)}, nil
 	}
 
-	platform := rc.extractPlatform()
-
-	if platform.Supported == false {
-		return "", nil
+	if job.RunsOn() == nil {
+		log.Errorf("'runs-on' key not defined in %s", rc.String())
 	}
 
-	image := platform.Image
-
-	if image != "" {
-		return image, nil
+	for _, runnerLabel := range rc.Run.Job().RunsOn() {
+		platformName := rc.ExprEval.Interpolate(runnerLabel)
+		image := rc.Config.Platforms[strings.ToLower(platformName)]
+		if image != nil {
+			return image, nil
+		}
 	}
 
-	return "", nil
+	return &model.Platform{}, nil
 }
 
 func (rc *RunContext) isEnabled(ctx context.Context) bool {
@@ -375,8 +371,7 @@ func (rc *RunContext) isEnabled(ctx context.Context) bool {
 		return true
 	}
 
-	_, err := rc.platformImage()
-
+	_, err = rc.platformImage()
 	if err != nil {
 		log.Infof("\U0001F6A7  Unable to run on missing image for platform '%+v'", job.RunsOn())
 		return false

@@ -24,6 +24,13 @@ func init() {
 	}
 }
 
+var platforms = map[string]*model.Platform{
+	"ubuntu-latest": &model.Platform{
+		Platform: "ubuntu-latest",
+		Image:    baseImage,
+	},
+}
+
 func TestGraphEvent(t *testing.T) {
 	planner, err := model.NewWorkflowPlanner("testdata/basic", true)
 	assert.Nil(t, err)
@@ -47,7 +54,7 @@ type TestJobFileInfo struct {
 	workflowPath          string
 	eventName             string
 	errorMessage          string
-	platforms             map[string]string
+	platforms             map[string]*model.Platform
 	containerArchitecture string
 }
 
@@ -87,9 +94,11 @@ func TestRunEvent(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test")
 	}
-
-	platforms := map[string]string{
-		"ubuntu-latest": baseImage,
+	platforms := map[string]*model.Platform{
+		"ubuntu-latest": &model.Platform{
+			Platform: "ubuntu-latest",
+			Image:    baseImage,
+		},
 	}
 
 	tables := []TestJobFileInfo{
@@ -97,9 +106,9 @@ func TestRunEvent(t *testing.T) {
 		{"testdata", "fail", "push", "exit with `FAILURE`: 1", platforms, ""},
 		{"testdata", "runs-on", "push", "", platforms, ""},
 		{"testdata", "checkout", "push", "", platforms, ""},
-		{"testdata", "shells/pwsh", "push", "", map[string]string{"ubuntu-latest": "ghcr.io/justingrote/act-pwsh:latest"}, ""}, // custom image with pwsh
+		{"testdata", "shells/pwsh", "push", "", map[string]*model.Platform{"ubuntu-latest": &model.Platform{Platform: "ubuntu-latest", Image: "ghcr.io/justingrote/act-pwsh:latest"}}, ""}, // custom image with pwsh
 		{"testdata", "shells/bash", "push", "", platforms, ""},
-		{"testdata", "shells/python", "push", "", map[string]string{"ubuntu-latest": "node:12-buster"}, ""}, // slim doesn't have python
+		{"testdata", "shells/python", "push", "", map[string]*model.Platform{"ubuntu-latest": &model.Platform{Platform: "ubuntu-latest", Image: "node:12-buster"}}, ""}, // slim doesn't have python
 		{"testdata", "shells/sh", "push", "", platforms, ""},
 		{"testdata", "job-container", "push", "", platforms, ""},
 		{"testdata", "job-container-non-root", "push", "", platforms, ""},
@@ -141,10 +150,6 @@ func TestRunEventSecrets(t *testing.T) {
 	log.SetLevel(log.DebugLevel)
 	ctx := context.Background()
 
-	platforms := map[string]string{
-		"ubuntu-latest": baseImage,
-	}
-
 	workflowPath := "secrets"
 	eventName := "push"
 
@@ -181,10 +186,6 @@ func TestRunEventPullRequest(t *testing.T) {
 
 	log.SetLevel(log.DebugLevel)
 	ctx := context.Background()
-
-	platforms := map[string]string{
-		"ubuntu-latest": baseImage,
-	}
 
 	workflowPath := "pull-request"
 	eventName := "pull_request"

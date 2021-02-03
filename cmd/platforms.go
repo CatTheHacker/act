@@ -9,14 +9,14 @@ import (
 
 func (i *Input) newPlatforms() map[string]*model.Platform {
 	platforms := map[string]*model.Platform{
-		"ubuntu-latest":  i.createSupportedPlatform("ubuntu-latest", model.PlatformEngineDocker, true, "node:12-buster-slim"),
-		"ubuntu-20.04":   i.createSupportedPlatform("ubuntu-20.04", model.PlatformEngineDocker, true, "node:12-buster-slim"),
-		"ubuntu-18.04":   i.createSupportedPlatform("ubuntu-18.04", model.PlatformEngineDocker, true, "node:12-buster-slim"),
-		"ubuntu-16.04":   i.createSupportedPlatform("ubuntu-16.04", model.PlatformEngineDocker, true, "node:12-stretch-slim"),
-		"windows-latest": i.createUnsupportedPlatform("windows-latest"),
-		"windows-2019":   i.createUnsupportedPlatform("windows-2019"),
-		"macos-latest":   i.createSupportedPlatform("macos-latest", model.PlatformEngineHost, true, ""),
-		"macos-10.15":    i.createSupportedPlatform("macos-10.15", model.PlatformEngineHost, true, ""),
+		"ubuntu-latest":  i.createPlatform("ubuntu-latest", false, "node:12-buster-slim"),
+		"ubuntu-20.04":   i.createPlatform("ubuntu-18.04", false, "node:12-buster-slim"),
+		"ubuntu-18.04":   i.createPlatform("ubuntu-18.04", false, "node:12-buster-slim"),
+		"ubuntu-16.04":   i.createPlatform("ubuntu-16.04", false, "node:12-stretch-slim"),
+		"windows-latest": i.createPlatform("windows-latest", false, ""),
+		"windows-2019":   i.createPlatform("windows-2019", false, ""),
+		"macos-latest":   i.createPlatform("macos-latest", false, ""),
+		"macos-10.15":    i.createPlatform("macos-10.15", false, ""),
 	}
 
 	for _, p := range i.platforms {
@@ -29,7 +29,7 @@ func (i *Input) newPlatforms() map[string]*model.Platform {
 				continue
 			}
 
-			if platform.Engine == model.PlatformEngineHost {
+			if platform.UseHost {
 				log.Warnf("\U0001F6A7  Unable to set custom image for non-docker based platforms '%+v'", platform.Platform)
 				continue
 			}
@@ -40,20 +40,10 @@ func (i *Input) newPlatforms() map[string]*model.Platform {
 	return platforms
 }
 
-func (i *Input) createUnsupportedPlatform(platform string) *model.Platform {
+func (i *Input) createPlatform(platform string, useHost bool, image string) *model.Platform {
 	return &model.Platform{
-		Platform:  platform,
-		Engine:    model.PlatformEngineNone,
-		Supported: false,
-		Image:     "",
-	}
-}
-
-func (i *Input) createSupportedPlatform(platform string, engine model.PlatformEngine, supported bool, image string) *model.Platform {
-	return &model.Platform{
-		Platform:  platform,
-		Engine:    engine,
-		Supported: supported,
-		Image:     image,
+		Platform: platform,
+		UseHost:  useHost,
+		Image:    image,
 	}
 }

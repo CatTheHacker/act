@@ -35,6 +35,7 @@ require (
 	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9 // indirect
 	golang.org/x/sys v0.0.0-20210124154548-22da62e12c0c // indirect
 	golang.org/x/term v0.0.0-20201117132131-f5c789dd3221
+	google.golang.org/appengine v1.6.1
 	google.golang.org/genproto v0.0.0-20201117123952-62d171c70ae1 // indirect
 	google.golang.org/grpc v1.33.2 // indirect
 	gopkg.in/sourcemap.v1 v1.0.5 // indirect
