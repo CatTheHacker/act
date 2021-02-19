@@ -48,6 +48,7 @@ func Execute(ctx context.Context, version string) {
 	rootCmd.Flags().StringVar(&input.defaultBranch, "defaultbranch", "", "the name of the main branch")
 	rootCmd.Flags().BoolVar(&input.privileged, "privileged", false, "use privileged mode")
 	rootCmd.Flags().StringVar(&input.usernsMode, "userns", "", "user namespace to use")
+	rootCmd.Flags().BoolVar(&input.disallowGitignore, "disallow-gitignore", true, "Controls whether paths specified in .gitignore should be copied into container")
 	rootCmd.PersistentFlags().StringVarP(&input.actor, "actor", "a", "nektos/act", "user that triggered the event")
 	rootCmd.PersistentFlags().StringVarP(&input.workflowsPath, "workflows", "W", "./.github/workflows/", "path to workflow file(s)")
 	rootCmd.PersistentFlags().StringVarP(&input.workdir, "directory", "C", ".", "working directory")
@@ -247,21 +248,22 @@ func newRunCommand(ctx context.Context, input *Input) func(*cobra.Command, []str
 
 		// run the plan
 		config := &runner.Config{
-			Actor:           input.actor,
-			EventName:       eventName,
-			EventPath:       input.EventPath(),
-			DefaultBranch:   defaultbranch,
-			ForcePull:       input.forcePull,
-			ReuseContainers: input.reuseContainers,
-			Workdir:         input.Workdir(),
-			BindWorkdir:     input.bindWorkdir,
-			LogOutput:       !input.noOutput,
-			Env:             envs,
-			Secrets:         secrets,
-			InsecureSecrets: input.insecureSecrets,
-			Platforms:       input.newPlatforms(),
-			Privileged:      input.privileged,
-			UsernsMode:      input.usernsMode,
+			Actor:             input.actor,
+			EventName:         eventName,
+			EventPath:         input.EventPath(),
+			DefaultBranch:     defaultbranch,
+			ForcePull:         input.forcePull,
+			ReuseContainers:   input.reuseContainers,
+			Workdir:           input.Workdir(),
+			BindWorkdir:       input.bindWorkdir,
+			LogOutput:         !input.noOutput,
+			Env:               envs,
+			Secrets:           secrets,
+			InsecureSecrets:   input.insecureSecrets,
+			Platforms:         input.newPlatforms(),
+			Privileged:        input.privileged,
+			UsernsMode:        input.usernsMode,
+			DisallowGitignore: input.disallowGitignore,
 		}
 		r, err := runner.New(config)
 		if err != nil {

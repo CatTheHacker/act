@@ -10,8 +10,8 @@ import (
 	"runtime"
 	"strings"
 
-	log "github.com/sirupsen/logrus"
 	"github.com/kballard/go-shellquote"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/nektos/act/pkg/common"
 	"github.com/nektos/act/pkg/container"
@@ -336,7 +336,7 @@ func (sc *StepContext) runAction(actionDir string, actionPath string) common.Exe
 				if err != nil {
 					return err
 				}
-				err = rc.JobContainer.CopyDir(containerActionDir+"/", actionDir, false)(ctx)
+				err = rc.JobContainer.CopyDir(containerActionDir+"/", actionDir, rc.Config.DisallowGitignore)(ctx)
 				if err != nil {
 					return err
 				}
