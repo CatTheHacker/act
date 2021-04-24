@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/nektos/act/pkg/common"
 	"github.com/nektos/act/pkg/model"
@@ -33,6 +36,40 @@ type Config struct {
 	Privileged            bool              // use privileged mode
 	UsernsMode            string            // user namespace to use
 	ContainerArchitecture string            // Desired OS/architecture platform for running containers
+}
+
+// Resolves the equivalent host path inside the container
+// This is required for windows and WSL 2 to translate things like C:\Users\Myproject to /mnt/users/Myproject
+// For use in docker volumes and binds
+func (config *Config) containerPath(path string) string {
+	abspath, err := filepath.Abs(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Test if the path is a windows path
+	windowsPathRegex := regexp.MustCompile(`^([a-zA-Z]):\\(.+)$`)
+	windowsPathComponents := windowsPathRegex.FindStringSubmatch(abspath)
+
+	// Return as-is if no match
+	if windowsPathComponents == nil {
+		return abspath
+	}
+
+	// Convert to WSL2-compatible path if it is a windows path
+	// NOTE: Cannot use filepath because it will use the wrong path separators assuming we want the path to be windows
+	// based if running on Windows, and because we are feeding this to Docker, GoLang auto-path-translate doesn't work.
+	driveLetter := strings.ToLower(windowsPathComponents[1])
+	translatedPath := strings.ReplaceAll(windowsPathComponents[2], `\`, `/`)
+	// Should make something like /mnt/c/Users/person/My Folder/MyActProject
+	result := strings.Join([]string{"/mnt", driveLetter, translatedPath}, `/`)
+	return result
+}
+
+// Resolves the equivalent host path inside the container
+// This is required for windows and WSL 2 to translate things like C:\Users\Myproject to /mnt/users/Myproject
+func (config *Config) ContainerWorkdir() string {
+	return config.containerPath(config.Workdir)
 }
 
 type runnerImpl struct {

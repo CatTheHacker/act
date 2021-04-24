@@ -40,19 +40,21 @@ type TestJobFileInfo struct {
 	containerArchitecture string
 }
 
-func runTestJobFile(ctx context.Context, t *testing.T, tjfi TestJobFileInfo) {
+func runTestJobFile(ctx context.Context, t *testing.T, tjfi TestJobFileInfo, secrets map[string]string) {
 	t.Run(tjfi.workflowPath, func(t *testing.T) {
 		workdir, err := filepath.Abs(tjfi.workdir)
 		assert.NilError(t, err, workdir)
 		fullWorkflowPath := filepath.Join(workdir, tjfi.workflowPath)
 		runnerConfig := &Config{
 			Workdir:               workdir,
-			BindWorkdir:           true,
+			BindWorkdir:           false,
 			EventName:             tjfi.eventName,
 			Platforms:             tjfi.platforms,
 			ReuseContainers:       false,
 			ContainerArchitecture: tjfi.containerArchitecture,
+			Secrets:               secrets,
 		}
+
 		runner, err := New(runnerConfig)
 		assert.NilError(t, err, tjfi.workflowPath)
 
@@ -79,27 +81,8 @@ func TestRunEvent(t *testing.T) {
 		"ubuntu-latest": "node:12.20.1-buster-slim",
 	}
 	tables := []TestJobFileInfo{
-		// {"testdata", "powershell", "push", "", platforms}, // Powershell is not available on default act test runner (yet) but preserving here for posterity
-		{"testdata", "basic", "push", "", platforms, "linux/amd64"},
-		{"testdata", "fail", "push", "exit with `FAILURE`: 1", platforms, "linux/amd64"},
-		{"testdata", "runs-on", "push", "", platforms, "linux/amd64"},
-		{"testdata", "job-container", "push", "", platforms, "linux/amd64"},
-		{"testdata", "job-container-non-root", "push", "", platforms, "linux/amd64"},
-		{"testdata", "uses-docker-url", "push", "", platforms, "linux/amd64"},
-		{"testdata", "remote-action-docker", "push", "", platforms, "linux/amd64"},
-		{"testdata", "remote-action-js", "push", "", platforms, "linux/amd64"},
-		{"testdata", "local-action-docker-url", "push", "", platforms, "linux/amd64"},
-		{"testdata", "local-action-dockerfile", "push", "", platforms, "linux/amd64"},
-		{"testdata", "local-action-js", "push", "", platforms, "linux/amd64"},
-		{"testdata", "matrix", "push", "", platforms, "linux/amd64"},
-		{"testdata", "matrix-include-exclude", "push", "", platforms, "linux/amd64"},
-		{"testdata", "commands", "push", "", platforms, "linux/amd64"},
-		{"testdata", "workdir", "push", "", platforms, "linux/amd64"},
-		// {"testdata", "issue-228", "push", "", platforms, "linux/amd64"}, // TODO [igni]: Remove this once everything passes
-		{"testdata", "defaults-run", "push", "", platforms, "linux/amd64"},
-		{"testdata", "uses-composite", "push", "", platforms, "linux/amd64"},
-
 		// linux/arm64
+
 		{"testdata", "basic", "push", "", platforms, "linux/arm64"},
 		{"testdata", "fail", "push", "exit with `FAILURE`: 1", platforms, "linux/arm64"},
 		{"testdata", "runs-on", "push", "", platforms, "linux/arm64"},
@@ -115,16 +98,20 @@ func TestRunEvent(t *testing.T) {
 		{"testdata", "matrix-include-exclude", "push", "", platforms, "linux/arm64"},
 		{"testdata", "commands", "push", "", platforms, "linux/arm64"},
 		{"testdata", "workdir", "push", "", platforms, "linux/arm64"},
-		// {"testdata", "issue-228", "push", "", platforms, "linux/arm64"}, // TODO [igni]: Remove this once everything passes
 		{"testdata", "defaults-run", "push", "", platforms, "linux/arm64"},
 		{"testdata", "uses-composite", "push", "", platforms, "linux/arm64"},
+		// {"testdata", "powershell", "push", "", platforms}, // Powershell is not available on default act test runner (yet) but preserving here for posterity
+		// {"testdata", "issue-228", "push", "", platforms, "linux/arm64"}, // TODO [igni]: Remove this once everything passes
+
 	}
 	log.SetLevel(log.DebugLevel)
 
 	ctx := context.Background()
+	secretspath, _ := filepath.Abs("../../.secrets")
+	secrets, _ := godotenv.Read(secretspath)
 
 	for _, table := range tables {
-		runTestJobFile(ctx, t, table)
+		runTestJobFile(ctx, t, table, secrets)
 	}
 }
 
