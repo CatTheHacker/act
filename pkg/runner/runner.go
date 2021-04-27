@@ -44,7 +44,8 @@ type Config struct {
 func (config *Config) containerPath(path string) string {
 	abspath, err := filepath.Abs(path)
 	if err != nil {
-		log.Fatal(err)
+		log.Error(err)
+		return ""
 	}
 
 	// Test if the path is a windows path
