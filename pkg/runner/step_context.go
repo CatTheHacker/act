@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/kballard/go-shellquote"
+	"github.com/gopherclass/go-shellquote"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/nektos/act/pkg/common"
