@@ -2,7 +2,6 @@ name: services
 on: push
 jobs:
   services:
-    name: Reproduction of failing Services interpolation
     runs-on: ubuntu-latest
     services:
       postgres:

@@ -40,6 +40,7 @@ type NewContainerInput struct {
 	Image       string
 	Username    string
 	Password    string
+	Hostname    string
 	Entrypoint  []string
 	Cmd         []string
 	WorkingDir  string
@@ -53,7 +54,6 @@ type NewContainerInput struct {
 	Privileged  bool
 	UsernsMode  string
 	Platform    string
-	Hostname    string
 }
 
 // FileEntry is a file to copy to a container
@@ -78,6 +78,7 @@ type Container interface {
 	UpdateFromPath(env *map[string]string) common.Executor
 	Remove() common.Executor
 	Close() common.Executor
+	SetContainerNetworkMode(mode string) common.Executor
 }
 
 // NewContainer creates a reference to a container
@@ -106,63 +107,73 @@ func supportsContainerImagePlatform(cli *client.Client) bool {
 	return constraint.Check(sv)
 }
 
+func (cr *containerReference) SetContainerNetworkMode(mode string) common.Executor {
+	return common.NewPipelineExecutor(
+		common.NewDebugExecutor("Changed network mode for container '%s' from '%s' to '%s'", cr.input.Name, cr.input.NetworkMode, mode),
+		func(ctx context.Context) error {
+			cr.input.NetworkMode = mode
+			return nil
+		},
+	)
+}
+
 func (cr *containerReference) ConnectToNetwork(name string) common.Executor {
-	return common.
-		NewDebugExecutor("%sdocker network connect %s %s", logPrefix, name, cr.input.Name).
-		Then(
-			common.NewPipelineExecutor(
-				cr.connect(),
-				cr.connectToNetwork(name),
-			).IfNot(common.Dryrun),
-		)
+	return common.NewPipelineExecutor(
+		common.NewInfoExecutor("%sdocker network connect %s %s", logPrefix, name, cr.input.Name),
+		common.NewPipelineExecutor(
+			cr.connect(),
+			cr.find(),
+			cr.connectToNetwork(name),
+		).IfNot(common.Dryrun),
+	)
 }
 
 func (cr *containerReference) Create(capAdd []string, capDrop []string) common.Executor {
-	return common.
-		NewInfoExecutor("%sdocker create image=%s platform=%s entrypoint=%+q cmd=%+q", logPrefix, cr.input.Image, cr.input.Platform, cr.input.Entrypoint, cr.input.Cmd).
-		Then(
-			common.NewPipelineExecutor(
-				cr.connect(),
-				cr.find(),
-				cr.create(capAdd, capDrop),
-			).IfNot(common.Dryrun),
-		)
+	return common.NewPipelineExecutor(
+		common.NewInfoExecutor("%sdocker create image=%s platform=%s entrypoint=%+q cmd=%+q", logPrefix, cr.input.Image, cr.input.Platform, cr.input.Entrypoint, cr.input.Cmd),
+		common.NewPipelineExecutor(
+			cr.connect(),
+			cr.find(),
+			cr.create(capAdd, capDrop),
+		).IfNot(common.Dryrun),
+	)
 }
 
 func (cr *containerReference) Start(attach bool) common.Executor {
-	return common.
-		NewInfoExecutor("%sdocker run image=%s platform=%s entrypoint=%+q cmd=%+q", logPrefix, cr.input.Image, cr.input.Platform, cr.input.Entrypoint, cr.input.Cmd).
-		Then(
-			common.NewPipelineExecutor(
-				cr.connect(),
-				cr.find(),
-				cr.attach().IfBool(attach),
-				cr.start(),
-				cr.wait().IfBool(attach),
-			).IfNot(common.Dryrun),
-		)
+	return common.NewPipelineExecutor(
+		common.NewInfoExecutor("%sdocker run image=%s platform=%s entrypoint=%+q cmd=%+q", logPrefix, cr.input.Image, cr.input.Platform, cr.input.Entrypoint, cr.input.Cmd),
+		common.NewPipelineExecutor(
+			cr.connect(),
+			cr.find(),
+			cr.attach().IfBool(attach),
+			cr.start(),
+			cr.wait().IfBool(attach),
+		).IfNot(common.Dryrun),
+	)
 }
 
 func (cr *containerReference) Pull(forcePull bool) common.Executor {
-	return common.
-		NewInfoExecutor("%sdocker pull image=%s platform=%s username=%s forcePull=%t", logPrefix, cr.input.Image, cr.input.Platform, cr.input.Username, forcePull).
-		Then(
-			NewDockerPullExecutor(NewDockerPullExecutorInput{
-				Image:     cr.input.Image,
-				ForcePull: forcePull,
-				Platform:  cr.input.Platform,
-				Username:  cr.input.Username,
-				Password:  cr.input.Password,
-			}),
-		)
+	return common.NewPipelineExecutor(
+		common.NewInfoExecutor("%sdocker pull image=%s platform=%s username=%s forcePull=%t", logPrefix, cr.input.Image, cr.input.Platform, cr.input.Username, forcePull),
+		NewDockerPullExecutor(NewDockerPullExecutorInput{
+			Image:     cr.input.Image,
+			ForcePull: forcePull,
+			Platform:  cr.input.Platform,
+			Username:  cr.input.Username,
+			Password:  cr.input.Password,
+		}),
+	)
 }
 
 func (cr *containerReference) Copy(destPath string, files ...*FileEntry) common.Executor {
 	return common.NewPipelineExecutor(
-		cr.connect(),
-		cr.find(),
-		cr.copyContent(destPath, files...),
-	).IfNot(common.Dryrun)
+		common.NewInfoExecutor("%sdocker cp ... destPath=%s", logPrefix, destPath),
+		common.NewPipelineExecutor(
+			cr.connect(),
+			cr.find(),
+			cr.copyContent(destPath, files...),
+		).IfNot(common.Dryrun),
+	)
 }
 
 func (cr *containerReference) CopyDir(destPath string, srcPath string, useGitIgnore bool) common.Executor {
@@ -192,7 +203,7 @@ func (cr *containerReference) UpdateFromPath(env *map[string]string) common.Exec
 
 func (cr *containerReference) Exec(command []string, env map[string]string, user, workdir string) common.Executor {
 	return common.NewPipelineExecutor(
-		common.NewInfoExecutor("%sdocker exec cmd=[%s] user=%s workdir=%s", logPrefix, strings.Join(command, " "), user, workdir),
+		common.NewInfoExecutor("%sdocker exec cmd=%v user=%s workdir=%s", logPrefix, command, user, workdir),
 		cr.connect(),
 		cr.find(),
 		cr.exec(command, env, user, workdir),
@@ -247,7 +258,7 @@ func GetDockerClient(ctx context.Context) (*client.Client, error) {
 
 func (cr *containerReference) connectToNetwork(name string) common.Executor {
 	return func(ctx context.Context) error {
-		return cr.cli.NetworkConnect(ctx, name, cr.input.Name, nil)
+		return cr.cli.NetworkConnect(ctx, name, cr.id, nil)
 	}
 }
 
@@ -332,15 +343,17 @@ func (cr *containerReference) create(capAdd []string, capDrop []string) common.E
 		input := cr.input
 
 		config := &container.Config{
+			Hostname:   input.Hostname,
 			Image:      input.Image,
 			WorkingDir: input.WorkingDir,
 			Env:        input.Env,
 			Tty:        isTerminal,
-			Hostname:   input.Hostname,
 		}
+
 		if len(input.Cmd) > 0 {
 			config.Cmd = input.Cmd
 		}
+
 		if len(input.Entrypoint) > 0 {
 			config.Entrypoint = input.Entrypoint
 		}
@@ -379,6 +392,7 @@ func (cr *containerReference) create(capAdd []string, capDrop []string) common.E
 		if err != nil {
 			return errors.WithStack(err)
 		}
+
 		logger.Debugf("Created container name=%s id=%v from image %v (platform: %s)", input.Name, resp.ID, input.Image, input.Platform)
 		logger.Debugf("ENV ==> %v", input.Env)
 
