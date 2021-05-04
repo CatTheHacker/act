@@ -95,6 +95,11 @@ func (rc *RunContext) GetBindsAndMounts() ([]string, map[string]string) {
 	return binds, mounts
 }
 
+// JobNetworkName returns formatted network name used in main container and its services
+func (rc *RunContext) JobNetworkName() string {
+	return createNetworkName("act", rc.Run.Workflow.Name, rc.Run.JobID, rc.Name)
+}
+
 func (rc *RunContext) startJobContainer() common.Executor {
 	image := rc.platformImage()
 
@@ -111,6 +116,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 
 		common.Logger(ctx).Infof("\U0001f680  Start image=%s", image)
 		name := rc.jobContainerName()
+		networkName := rc.JobNetworkName()
 
 		envList := make([]string, 0)
 
@@ -120,33 +126,36 @@ func (rc *RunContext) startJobContainer() common.Executor {
 
 		binds, mounts := rc.GetBindsAndMounts()
 
-		// add service containers
-		for name, spec := range rc.Run.Job().Services {
-			mergedEnv := envList
-			for k, v := range spec.Env {
-				mergedEnv = append(mergedEnv, fmt.Sprintf("%s=%s", k, v))
+		if rc.Run.Job().Services != nil {
+			// add service containers
+			for name, spec := range rc.Run.Job().Services {
+				mergedEnv := envList
+				for k, v := range spec.Env {
+					mergedEnv = append(mergedEnv, fmt.Sprintf("%s=%s", k, v))
+				}
+
+				mnt := mounts
+				mnt[name] = filepath.Dir(rc.Config.ContainerWorkdir())
+
+				c := container.NewContainer(&container.NewContainerInput{
+					Name:       name,
+					Hostname:   name,
+					WorkingDir: rc.Config.ContainerWorkdir(),
+					Image:      spec.Image,
+					Username:   rc.Config.Secrets["DOCKER_USERNAME"],
+					Password:   rc.Config.Secrets["DOCKER_PASSWORD"],
+					Env:        mergedEnv,
+					Mounts:     mnt,
+					//NetworkMode: "bridge",
+					Binds:      binds,
+					Stdout:     logWriter,
+					Stderr:     logWriter,
+					Privileged: rc.Config.Privileged,
+					UsernsMode: rc.Config.UsernsMode,
+					Platform:   rc.Config.ContainerArchitecture,
+				})
+				rc.ServiceContainers = append(rc.ServiceContainers, c)
 			}
-
-			mnt := mounts
-			mnt[name] = filepath.Dir(rc.Config.ContainerWorkdir())
-
-			c := container.NewContainer(&container.NewContainerInput{
-				Name:       name,
-				WorkingDir: rc.Config.ContainerWorkdir(),
-				Image:      spec.Image,
-				Username:   rc.Config.Secrets["DOCKER_USERNAME"],
-				Password:   rc.Config.Secrets["DOCKER_PASSWORD"],
-				Env:        mergedEnv,
-				Mounts:     mnt,
-				// NetworkMode: "host",
-				Binds:      binds,
-				Stdout:     logWriter,
-				Stderr:     logWriter,
-				Privileged: rc.Config.Privileged,
-				UsernsMode: rc.Config.UsernsMode,
-				Platform:   rc.Config.ContainerArchitecture,
-			})
-			rc.ServiceContainers = append(rc.ServiceContainers, c)
 		}
 
 		rc.JobContainer = container.NewContainer(&container.NewContainerInput{
@@ -157,6 +166,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			Username:   rc.Config.Secrets["DOCKER_USERNAME"],
 			Password:   rc.Config.Secrets["DOCKER_PASSWORD"],
 			Name:       name,
+			Hostname:   name,
 			Env:        envList,
 			Mounts:     mounts,
 			// NetworkMode: "host",
@@ -168,6 +178,10 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			Platform:   rc.Config.ContainerArchitecture,
 		})
 
+		if rc.Run.Job().Services == nil {
+			rc.JobContainer.SetContainerNetworkMode("host")
+		}
+
 		var copyWorkspace bool
 		var copyToPath string
 		if !rc.Config.BindWorkdir {
@@ -175,17 +189,20 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			copyToPath = filepath.Join(rc.Config.ContainerWorkdir(), copyToPath)
 		}
 
-		networkName := fmt.Sprintf("act-%s-network", rc.Run.JobID)
 		return common.NewPipelineExecutor(
 			rc.JobContainer.Pull(rc.Config.ForcePull),
 			rc.stopServiceContainers(),
 			rc.stopJobContainer(),
-			rc.removeNetwork(networkName),
-			rc.createNetwork(networkName),
-			rc.startServiceContainers(networkName),
+			common.NewPipelineExecutor(
+				// rc.removeNetwork(networkName).IfBool(container.DockerNetworkExists(ctx, networkName)),
+				rc.createNetwork(networkName, "", "", "").IfBool(!container.DockerNetworkExists(ctx, networkName)),
+				rc.startServiceContainers(networkName),
+			).IfBool(rc.Run.Job().Services != nil),
 			rc.JobContainer.Create(rc.Config.ContainerCapAdd, rc.Config.ContainerCapDrop),
 			rc.JobContainer.Start(false),
-			rc.JobContainer.ConnectToNetwork(networkName),
+			common.NewPipelineExecutor(
+				rc.JobContainer.ConnectToNetwork(networkName),
+			).IfBool(rc.Run.Job().Services != nil),
 			rc.JobContainer.UpdateFromEnv("/etc/environment", &rc.Env),
 			rc.JobContainer.Exec([]string{"mkdir", "-m", "0777", "-p", ActPath}, rc.Env, "root", ""),
 			rc.JobContainer.CopyDir(copyToPath, rc.Config.Workdir+string(filepath.Separator)+".", rc.Config.UseGitIgnore).IfBool(copyWorkspace),
@@ -206,9 +223,9 @@ func (rc *RunContext) startJobContainer() common.Executor {
 	}
 }
 
-func (rc *RunContext) createNetwork(name string) common.Executor {
+func (rc *RunContext) createNetwork(name, subnet, ipRange, gateway string) common.Executor {
 	return func(ctx context.Context) error {
-		return container.NewDockerNetworkCreateExecutor(name)(ctx)
+		return container.NewDockerNetworkCreateExecutor(name, subnet, ipRange, gateway)(ctx)
 	}
 }
 
@@ -228,8 +245,10 @@ func (rc *RunContext) execJobContainer(cmd []string, env map[string]string, user
 func (rc *RunContext) stopJobContainer() common.Executor {
 	return func(ctx context.Context) error {
 		if rc.JobContainer != nil && !rc.Config.ReuseContainers {
-			return rc.JobContainer.Remove().
-				Then(container.NewDockerVolumeRemoveExecutor(rc.jobContainerName(), false))(ctx)
+			return common.NewPipelineExecutor(
+				rc.stopServiceContainers(),
+				rc.JobContainer.Remove().Then(container.NewDockerVolumeRemoveExecutor(rc.jobContainerName(), false)),
+			)(ctx)
 		}
 		return nil
 	}
@@ -244,6 +263,7 @@ func (rc *RunContext) startServiceContainers(networkName string) common.Executor
 				c.Create([]string{}, []string{}),
 				c.Start(false),
 				c.ConnectToNetwork(networkName),
+				c.Start(false),
 			))
 		}
 		return common.NewParallelExecutor(execs...)(ctx)
@@ -492,6 +512,10 @@ func createContainerName(parts ...string) string {
 		}
 	}
 	return strings.ReplaceAll(strings.Trim(strings.Join(name, "-"), "-"), "--", "-")
+}
+
+func createNetworkName(parts ...string) string {
+	return strings.ReplaceAll(strings.Trim(strings.Join(parts, "_"), "-"), "--", "-")
 }
 
 func trimToLen(s string, l int) string {
