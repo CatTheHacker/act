@@ -1,6 +1,7 @@
 package model
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -100,35 +101,19 @@ jobs:
 }
 
 func TestReadWorkflow_StepsTypes(t *testing.T) {
-	yaml := `
-name: invalid step definition
+	f, err := os.Open("testdata/complete-workflow/push.yml")
+	assert.Nil(t, err)
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: test1
-        uses: actions/checkout@v2
-        run: echo
-      - name: test2
-        run: echo
-      - name: test3
-        uses: actions/checkout@v2
-      - name: test4
-        uses: docker://nginx:latest
-      - name: test5
-        uses: ./local-action
-`
-
-	workflow, err := ReadWorkflow(strings.NewReader(yaml))
+	workflow, err := ReadWorkflow(f)
 	assert.NoError(t, err, "read workflow should succeed")
-	assert.Len(t, workflow.Jobs, 1)
-	assert.Len(t, workflow.Jobs["test"].Steps, 5)
-	assert.Equal(t, workflow.Jobs["test"].Steps[0].Type(), StepTypeInvalid)
-	assert.Equal(t, workflow.Jobs["test"].Steps[1].Type(), StepTypeRun)
-	assert.Equal(t, workflow.Jobs["test"].Steps[2].Type(), StepTypeUsesActionRemote)
-	assert.Equal(t, workflow.Jobs["test"].Steps[3].Type(), StepTypeUsesDockerURL)
-	assert.Equal(t, workflow.Jobs["test"].Steps[4].Type(), StepTypeUsesActionLocal)
+	assert.Len(t, workflow.Jobs, 2)
+	stepTest := workflow.Jobs["invalid-step-definition"]
+	assert.Len(t, stepTest.Steps, 5)
+	assert.Equal(t, stepTest.Steps[0].Type(), StepTypeInvalid)
+	assert.Equal(t, stepTest.Steps[1].Type(), StepTypeRun)
+	assert.Equal(t, stepTest.Steps[2].Type(), StepTypeUsesActionRemote)
+	assert.Equal(t, stepTest.Steps[3].Type(), StepTypeUsesDockerURL)
+	assert.Equal(t, stepTest.Steps[4].Type(), StepTypeUsesActionLocal)
 }
 
 // See: https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idoutputs
@@ -178,7 +163,12 @@ func TestStep_ShellCommand(t *testing.T) {
 		shell string
 		want  string
 	}{
+		{"bash", "bash --noprofile --norc -e -o pipefail {0}"},
+		{"", "bash --noprofile --norc -e -o pipefail {0}"},
 		{"pwsh", "pwsh -command . '{0}'"},
+		{"python", "python {0}"},
+		{"sh", "sh -e -c {0}"},
+		{"cmd", `%ComSpec% /D /E:ON /V:OFF /S /C "CALL \"{0}\"\"`},
 		{"powershell", "powershell -command . '{0}'"},
 	}
 	for _, tt := range tests {
@@ -186,5 +176,46 @@ func TestStep_ShellCommand(t *testing.T) {
 			got := (&Step{Shell: tt.shell}).ShellCommand()
 			assert.Equal(t, got, tt.want)
 		})
+	}
+}
+
+func TestEnvironment(t *testing.T) {
+	for _, v := range []interface{}{
+		map[string]interface{}{
+			"var1": "stringValue",
+			"var2": map[string]string{
+				"var1": "stringInInterface",
+			},
+			"var3": 5,
+		},
+		map[string]string{
+			"var1": "stringValue",
+			"var2": "secondString",
+		},
+		"var1",
+		[]string{
+			"var1", "var2", "var3",
+		},
+	} {
+		j := Job{Env: v}
+		assert.NotNil(t, j.Environment())
+
+		s := Step{Env: v}
+		assert.NotNil(t, s.Environment())
+
+		assert.NotNil(t, environment(v))
+	}
+
+	for _, v := range []interface{}{
+		5,
+		[]byte("byte"),
+	} {
+		j := Job{Env: v}
+		assert.Nil(t, j.Environment())
+
+		s := Step{Env: v}
+		assert.Nil(t, s.Environment())
+
+		assert.Nil(t, environment(v))
 	}
 }

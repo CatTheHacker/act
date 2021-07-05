@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/gopherclass/go-shellquote"
 	"github.com/mitchellh/go-homedir"
 	log "github.com/sirupsen/logrus"
 
@@ -95,7 +96,11 @@ func (rc *RunContext) GetBindsAndMounts() ([]string, map[string]string) {
 }
 
 func (rc *RunContext) startJobContainer() common.Executor {
-	image := rc.platformImage()
+	c := rc.containerOptions()
+
+	if c.Image == "" {
+		c.Image = rc.platformImage()
+	}
 
 	return func(ctx context.Context) error {
 		rawLogger := common.Logger(ctx).WithField("raw_output", true)
@@ -108,7 +113,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			return true
 		})
 
-		common.Logger(ctx).Infof("\U0001f680  Start image=%s", image)
+		common.Logger(ctx).Infof("\U0001f680  Start image=%s", c.Image)
 		name := rc.jobContainerName()
 
 		envList := make([]string, 0)
@@ -123,7 +128,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			Cmd:         nil,
 			Entrypoint:  []string{"/usr/bin/tail", "-f", "/dev/null"},
 			WorkingDir:  rc.Config.ContainerWorkdir(),
-			Image:       image,
+			Image:       c.Image,
 			Username:    rc.Config.Secrets["DOCKER_USERNAME"],
 			Password:    rc.Config.Secrets["DOCKER_PASSWORD"],
 			Name:        name,
@@ -283,8 +288,7 @@ func (rc *RunContext) newStepExecutor(step *model.Step) common.Executor {
 func (rc *RunContext) platformImage() string {
 	job := rc.Run.Job()
 
-	c := job.Container()
-	if c != nil {
+	if c := rc.containerOptions(); c.Image != "" {
 		return rc.ExprEval.Interpolate(c.Image)
 	}
 
@@ -301,6 +305,34 @@ func (rc *RunContext) platformImage() string {
 	}
 
 	return ""
+}
+
+func (rc *RunContext) containerOptions() container.NewContainerInput {
+	var out container.NewContainerInput
+	if c := rc.Run.Job().Container(); c != nil {
+		var opts []string
+		for _, v := range strings.Split(c.Options, ` --`) {
+			opts = append(opts, strings.Split(v, ` -`)...)
+		}
+		for i, o := range opts {
+			p, err := shellquote.Split(opts[i])
+			if err != nil {
+				log.Error(err)
+			}
+			switch {
+			case strings.HasPrefix(o, "env="), strings.HasPrefix(o, "env "), strings.HasPrefix(o, "e="), strings.HasPrefix(o, "e"):
+				out.Env = append(out.Env, p[1])
+			case strings.HasPrefix(o, "user="), strings.HasPrefix(o, "user "), strings.HasPrefix(o, "u="), strings.HasPrefix(o, "u "):
+				// unsupported
+			case strings.HasPrefix(o, "privileged"):
+				out.Privileged = true
+			case strings.HasPrefix(o, "userns"):
+				out.UsernsMode = p[1]
+			}
+		}
+	}
+
+	return out
 }
 
 func (rc *RunContext) isEnabled(ctx context.Context) bool {

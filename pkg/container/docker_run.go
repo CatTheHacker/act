@@ -111,6 +111,7 @@ func (cr *containerReference) Create(capAdd []string, capDrop []string) common.E
 			).IfNot(common.Dryrun),
 		)
 }
+
 func (cr *containerReference) Start(attach bool) common.Executor {
 	return common.
 		NewInfoExecutor("%sdocker run image=%s platform=%s entrypoint=%+q cmd=%+q", logPrefix, cr.input.Image, cr.input.Platform, cr.input.Entrypoint, cr.input.Cmd).
@@ -124,6 +125,7 @@ func (cr *containerReference) Start(attach bool) common.Executor {
 			).IfNot(common.Dryrun),
 		)
 }
+
 func (cr *containerReference) Pull(forcePull bool) common.Executor {
 	return NewDockerPullExecutor(NewDockerPullExecutorInput{
 		Image:     cr.input.Image,

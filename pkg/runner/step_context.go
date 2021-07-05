@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/kballard/go-shellquote"
+	"github.com/gopherclass/go-shellquote"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 
@@ -304,6 +304,7 @@ func (sc *StepContext) newStepContainer(ctx context.Context, image string, cmd [
 	})
 	return stepContainer
 }
+
 func (sc *StepContext) runUsesContainer() common.Executor {
 	rc := sc.RunContext
 	step := sc.Step

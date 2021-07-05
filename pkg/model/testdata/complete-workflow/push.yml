@@ -1,0 +1,34 @@
+on: [push, pull_request]
+jobs:
+  container-execution-context:
+    container:
+      image: nginx:latest
+      env:
+        foo: bar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./actions/docker-url
+
+  local-action-docker-url:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./actions/docker-url
+
+  invalid-step-definition:
+    runs-on: ubuntu-latest
+    steps:
+      - name: StepTypeInvalid
+        uses: actions/checkout@v2
+        run: echo
+
+      - name: StepTypeRun
+        run: echo
+
+      - name: StepTypeUsesActionRemote
+        uses: actions/checkout@v2
+
+      - name: StepTypeUsesDockerURL
+        uses: docker://nginx:latest
+
+      - name: StepTypeUsesActionLocal
+        uses: ./local-action

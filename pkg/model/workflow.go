@@ -162,13 +162,23 @@ func environment(e interface{}) map[string]string {
 			}
 		}
 	case map[string]string:
-		for k, v := range e.(map[string]string) {
+		for k, v := range t {
 			env[k] = v
 		}
+	case string:
+		env[t] = ""
+	case []string:
+		for _, v := range t {
+			env[v] = ""
+		}
+	default:
+		log.Warnf("Interface {%s} cannot be unmarshalled", e)
+		return nil
 	}
 	return env
 }
 
+// Environment returns proper string based key=value map from supplied interface for a given job
 func (j *Job) Environment() map[string]string {
 	return environment(j.Env)
 }
@@ -288,6 +298,7 @@ func (s *Step) String() string {
 	return s.ID
 }
 
+// Environment returns proper string based key=value map from supplied interface for a given step
 func (s *Step) Environment() map[string]string {
 	return environment(s.Env)
 }
