@@ -14,10 +14,10 @@ require (
 	github.com/go-git/go-git/v5 v5.2.0
 	github.com/go-ini/ini v1.62.0
 	github.com/golang/protobuf v1.4.3 // indirect
+	github.com/gopherclass/go-shellquote v0.0.0-20200814145606-fab22d094485
 	github.com/gopherjs/gopherjs v0.0.0-20181103185306-d547d1d9531e // indirect
 	github.com/imdario/mergo v0.3.11 // indirect
 	github.com/joho/godotenv v1.3.0
-	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
 	github.com/kevinburke/ssh_config v0.0.0-20201106050909-4977a11b4351 // indirect
 	github.com/mattn/go-isatty v0.0.12
 	github.com/mitchellh/go-homedir v1.1.0
