@@ -124,7 +124,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			return true
 		})
 
-		common.Logger(ctx).Infof("\U0001f680  Start image=%s", image)
+		common.Logger(ctx).Infof("\U0001f680  Start image=%s", platform.Image)
 		name := rc.jobContainerName()
 
 		envList := make([]string, 0)
