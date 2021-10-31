@@ -1,18 +1,16 @@
 package cmd
 
 import (
+	"embed"
 	"encoding/json"
 	"io/ioutil"
 	"strings"
-
-	// Used to embed schema.json
-	_ "embed"
 
 	log "github.com/sirupsen/logrus"
 )
 
 //go:embed schema.json
-var schema []byte
+var schema embed.FS
 
 type jsonSchemaEntry struct {
 	Ref         string                      `json:"$ref,omitempty"`
@@ -73,8 +71,13 @@ func getEventFromFile(p string) string {
 		return ""
 	}
 
+	var b []byte
+	if b, err = schema.ReadFile("schema.json"); err != nil {
+		return ""
+	}
+
 	jschema := &jsonSchemaEntry{}
-	err = json.Unmarshal(schema, jschema)
+	err = json.Unmarshal(b, jschema)
 	if err != nil {
 		log.Errorf("%v", err)
 		return ""
