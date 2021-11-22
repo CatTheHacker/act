@@ -600,10 +600,22 @@ func (sc *StepContext) execAsDocker(ctx context.Context, action *model.Action, a
 			entrypoint = nil
 		}
 	}
+
+	// create temporary container to inspect image, so we can appriopriately source ENV from it
+	// we can't do that after the final container is created because Docker doesn't allow updating its configuration
+	log.Debugf("Docker image to be used: '%s'", image)
+	tmpContainer := container.NewContainer(&container.NewContainerInput{Image: image})
+	if err = common.NewPipelineExecutor(
+		prepImage,
+		tmpContainer.Pull(rc.Config.ForcePull),
+		tmpContainer.Create(rc.Config.ContainerCapAdd, rc.Config.ContainerCapDrop),
+		tmpContainer.UpdateFromImageEnv(&sc.Env),
+	).Finally(tmpContainer.Remove()).Finally(tmpContainer.Close())(ctx); err != nil {
+		log.Error(err)
+	}
+
 	stepContainer := sc.newStepContainer(ctx, image, cmd, entrypoint)
 	return common.NewPipelineExecutor(
-		prepImage,
-		stepContainer.Pull(rc.Config.ForcePull),
 		stepContainer.Remove().IfBool(!rc.Config.ReuseContainers),
 		stepContainer.Create(rc.Config.ContainerCapAdd, rc.Config.ContainerCapDrop),
 		stepContainer.Start(true),
