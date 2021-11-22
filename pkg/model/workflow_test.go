@@ -179,31 +179,31 @@ func TestReadWorkflow_Strategy(t *testing.T) {
 
 	p := w.PlanJob("strategy-only-max-parallel")
 
-	assert.Equal(t, len(p.Stages), 1)
-	assert.Equal(t, len(p.Stages[0].Runs), 1)
+	assert.Len(t, p.Stages, 1)
+	assert.Len(t, p.Stages[0].Runs, 1)
 
 	wf := p.Stages[0].Runs[0].Workflow
 
 	job := wf.Jobs["strategy-only-max-parallel"]
-	assert.Equal(t, job.GetMatrixes(), []map[string]interface{}{{}})
-	assert.Equal(t, job.Matrix(), map[string][]interface{}(nil))
-	assert.Equal(t, job.Strategy.MaxParallel, 2)
-	assert.Equal(t, job.Strategy.FailFast, true)
+	assert.Equal(t, []map[string]interface{}{{}}, job.GetMatrixes())
+	assert.Equal(t, map[string][]interface{}(nil), job.Matrix())
+	assert.Equal(t, 2, job.Strategy.MaxParallel)
+	assert.Equal(t, true, job.Strategy.FailFast)
 
 	job = wf.Jobs["strategy-only-fail-fast"]
-	assert.Equal(t, job.GetMatrixes(), []map[string]interface{}{{}})
-	assert.Equal(t, job.Matrix(), map[string][]interface{}(nil))
-	assert.Equal(t, job.Strategy.MaxParallel, 4)
-	assert.Equal(t, job.Strategy.FailFast, false)
+	assert.Equal(t, []map[string]interface{}{{}}, job.GetMatrixes())
+	assert.Equal(t, map[string][]interface{}(nil), job.Matrix())
+	assert.Equal(t, 4, job.Strategy.MaxParallel)
+	assert.Equal(t, false, job.Strategy.FailFast)
 
 	job = wf.Jobs["strategy-no-matrix"]
-	assert.Equal(t, job.GetMatrixes(), []map[string]interface{}{{}})
-	assert.Equal(t, job.Matrix(), map[string][]interface{}(nil))
-	assert.Equal(t, job.Strategy.MaxParallel, 2)
-	assert.Equal(t, job.Strategy.FailFast, false)
+	assert.Equal(t, []map[string]interface{}{{}}, job.GetMatrixes())
+	assert.Equal(t, map[string][]interface{}(nil), job.Matrix())
+	assert.Equal(t, 2, job.Strategy.MaxParallel)
+	assert.Equal(t, false, job.Strategy.FailFast)
 
 	job = wf.Jobs["strategy-all"]
-	assert.Equal(t, job.GetMatrixes(),
+	assert.Equal(t,
 		[]map[string]interface{}{
 			{"datacenter": "site-c", "node-version": "14.x", "site": "staging"},
 			{"datacenter": "site-c", "node-version": "16.x", "site": "staging"},
@@ -211,8 +211,9 @@ func TestReadWorkflow_Strategy(t *testing.T) {
 			{"datacenter": "site-a", "node-version": "10.x", "site": "prod"},
 			{"datacenter": "site-b", "node-version": "12.x", "site": "dev"},
 		},
+		job.GetMatrixes(),
 	)
-	assert.Equal(t, job.Matrix(),
+	assert.Equal(t,
 		map[string][]interface{}{
 			"datacenter": {"site-c", "site-d"},
 			"exclude": {
@@ -226,6 +227,7 @@ func TestReadWorkflow_Strategy(t *testing.T) {
 			"node-version": {"14.x", "16.x"},
 			"site":         {"staging"},
 		},
+		job.Matrix(),
 	)
 	assert.Equal(t, job.Strategy.MaxParallel, 2)
 	assert.Equal(t, job.Strategy.FailFast, false)
