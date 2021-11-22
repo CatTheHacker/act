@@ -24,6 +24,10 @@ func init() {
 	}
 }
 
+var platforms = map[string]string{
+	"ubuntu-latest": baseImage,
+}
+
 func TestGraphEvent(t *testing.T) {
 	planner, err := model.NewWorkflowPlanner("testdata/basic", true)
 	assert.Nil(t, err)
@@ -88,10 +92,6 @@ func TestRunEvent(t *testing.T) {
 		t.Skip("skipping integration test")
 	}
 
-	platforms := map[string]string{
-		"ubuntu-latest": baseImage,
-	}
-
 	tables := []TestJobFileInfo{
 		{"testdata", "basic", "push", "", platforms, ""},
 		{"testdata", "fail", "push", "exit with `FAILURE`: 1", platforms, ""},
@@ -143,10 +143,6 @@ func TestRunEventSecrets(t *testing.T) {
 	log.SetLevel(log.DebugLevel)
 	ctx := context.Background()
 
-	platforms := map[string]string{
-		"ubuntu-latest": baseImage,
-	}
-
 	workflowPath := "secrets"
 	eventName := "push"
 
@@ -183,10 +179,6 @@ func TestRunEventPullRequest(t *testing.T) {
 
 	log.SetLevel(log.DebugLevel)
 	ctx := context.Background()
-
-	platforms := map[string]string{
-		"ubuntu-latest": baseImage,
-	}
 
 	workflowPath := "pull-request"
 	eventName := "pull_request"
