@@ -41,13 +41,17 @@ func printList(plan *model.Plan) error {
 	for i, stage := range plan.Stages {
 		for _, r := range stage.Runs {
 			jobID := r.JobID
+			var evs []string
+			for _, e := range r.Workflow.On {
+				evs = append(evs, e.EventName())
+			}
 			line := lineInfoDef{
 				jobID:   jobID,
 				jobName: r.String(),
 				stage:   strconv.Itoa(i),
-				wfName:  r.Workflow.Name,
-				wfFile:  r.Workflow.File,
-				events:  strings.Join(r.Workflow.On(), `,`),
+				wfName:  r.Workflow.String(),
+				wfFile:  r.File,
+				events:  strings.Join(evs, `,`),
 			}
 			if _, ok := jobs[jobID]; ok {
 				duplicateJobIDs = true

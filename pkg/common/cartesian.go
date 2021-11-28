@@ -1,19 +1,21 @@
 package common
 
+import "github.com/rhysd/actionlint"
+
 // CartesianProduct takes map of lists and returns list of unique tuples
-func CartesianProduct(mapOfLists map[string][]interface{}) []map[string]interface{} {
+func CartesianProduct(mapOfLists map[string]*actionlint.MatrixRow) []map[string]actionlint.RawYAMLValue {
 	listNames := make([]string, 0)
-	lists := make([][]interface{}, 0)
+	lists := make([][]actionlint.RawYAMLValue, 0)
 	for k, v := range mapOfLists {
 		listNames = append(listNames, k)
-		lists = append(lists, v)
+		lists = append(lists, v.Values)
 	}
 
 	listCart := cartN(lists...)
 
-	rtn := make([]map[string]interface{}, 0)
+	rtn := make([]map[string]actionlint.RawYAMLValue, 0)
 	for _, list := range listCart {
-		vMap := make(map[string]interface{})
+		vMap := make(map[string]actionlint.RawYAMLValue)
 		for i, v := range list {
 			vMap[listNames[i]] = v
 		}
@@ -22,7 +24,7 @@ func CartesianProduct(mapOfLists map[string][]interface{}) []map[string]interfac
 	return rtn
 }
 
-func cartN(a ...[]interface{}) [][]interface{} {
+func cartN(a ...[]actionlint.RawYAMLValue) [][]actionlint.RawYAMLValue {
 	c := 1
 	for _, a := range a {
 		c *= len(a)
@@ -30,8 +32,8 @@ func cartN(a ...[]interface{}) [][]interface{} {
 	if c == 0 || len(a) == 0 {
 		return nil
 	}
-	p := make([][]interface{}, c)
-	b := make([]interface{}, c*len(a))
+	p := make([][]actionlint.RawYAMLValue, c)
+	b := make([]actionlint.RawYAMLValue, c*len(a))
 	n := make([]int, len(a))
 	s := 0
 	for i := range p {

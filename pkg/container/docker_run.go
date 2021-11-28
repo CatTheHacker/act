@@ -358,7 +358,7 @@ func (cr *containerReference) create(capAdd []string, capDrop []string) common.E
 			return errors.WithStack(err)
 		}
 		logger.Debugf("Created container name=%s id=%v from image %v (platform: %s)", input.Name, resp.ID, input.Image, input.Platform)
-		logger.Debugf("ENV ==> %v", input.Env)
+		common.LogSlice(ctx, "container created", input.Env)
 
 		cr.id = resp.ID
 		return nil
@@ -422,15 +422,20 @@ func (cr *containerReference) extractFromImageEnv(env *map[string]string) common
 	return func(ctx context.Context) error {
 		logger := common.Logger(ctx)
 
+		logger.Debugf("Inspecting image: '%s'", cr.input.Image)
 		inspect, _, err := cr.cli.ImageInspectWithRaw(ctx, cr.input.Image)
 		if err != nil {
 			logger.Error(err)
 		}
 
+		common.LogSlice(ctx, "extractFromImageEnv.ImageInspectWithRaw", inspect.Config.Env)
+
 		imageEnv, err := godotenv.Unmarshal(strings.Join(inspect.Config.Env, "\n"))
 		if err != nil {
 			logger.Error(err)
 		}
+
+		common.LogMap(ctx, "extractFromImageEnv.godotenv", imageEnv)
 
 		for k, v := range imageEnv {
 			if k == "PATH" {
@@ -675,7 +680,7 @@ func (cr *containerReference) copyContent(dstPath string, files ...*FileEntry) c
 		var buf bytes.Buffer
 		tw := tar.NewWriter(&buf)
 		for _, file := range files {
-			log.Debugf("Writing entry to tarball %s len:%d", file.Name, len(file.Body))
+			log.Tracef("Writing entry to tarball %s len:%d", file.Name, len(file.Body))
 			hdr := &tar.Header{
 				Name: file.Name,
 				Mode: file.Mode,

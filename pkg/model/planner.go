@@ -1,16 +1,12 @@
 package model
 
 import (
-	"fmt"
-	"io"
 	"io/ioutil"
 	"math"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -18,7 +14,7 @@ import (
 type WorkflowPlanner interface {
 	PlanEvent(eventName string) *Plan
 	PlanJob(jobName string) *Plan
-	GetEvents() []string
+	GetEvents() []Event
 }
 
 // Plan contains a list of stages to run in series
@@ -33,55 +29,21 @@ type Stage struct {
 
 // Run represents a job from a workflow that needs to be run
 type Run struct {
-	Workflow *Workflow
+	File     string
 	JobID    string
+	Workflow *Workflow
 }
 
 func (r *Run) String() string {
-	jobName := r.Job().Name
-	if jobName == "" {
-		jobName = r.JobID
+	if r.Job().Name == nil {
+		return r.JobID
 	}
-	return jobName
+	return r.Job().Name.Value
 }
 
 // Job returns the job for this Run
 func (r *Run) Job() *Job {
 	return r.Workflow.GetJob(r.JobID)
-}
-
-// Helper function for FixIfstatement
-func FixIfStatement1(val string, lines [][][]byte, l int) (string, error) {
-	if val != "" {
-		line := lines[l-1][0]
-		outcome := regexp.MustCompile(`\s+if:\s+".*".*`).FindSubmatch(line)
-		if outcome != nil {
-			oldLines := regexp.MustCompile(`"(.*?)"`).FindAllSubmatch(line, 2)
-			val = "${{" + string(oldLines[0][1]) + "}}"
-		}
-	}
-	return val, nil
-}
-
-// Fixes faulty if statements from decoder
-func FixIfStatement(content []byte, wr *Workflow) error {
-	jobs := wr.Jobs
-	lines := regexp.MustCompile(".*\n|.+$").FindAllSubmatch(content, -1)
-	for j := range jobs {
-		val, err := FixIfStatement1(jobs[j].If.Value, lines, jobs[j].If.Line)
-		if err != nil {
-			return err
-		}
-		jobs[j].If.Value = val
-		for i := range jobs[j].Steps {
-			val, err = FixIfStatement1(jobs[j].Steps[i].If.Value, lines, jobs[j].Steps[i].If.Line)
-			if err != nil {
-				return err
-			}
-			jobs[j].Steps[i].If.Value = val
-		}
-	}
-	return nil
 }
 
 type WorkflowFiles struct {
@@ -91,7 +53,7 @@ type WorkflowFiles struct {
 
 // NewWorkflowPlanner will load a specific workflow, all workflows from a directory or all workflows from a directory and its subdirectories
 // nolint: gocyclo
-func NewWorkflowPlanner(path string, noWorkflowRecurse bool) (WorkflowPlanner, error) {
+func NewWorkflowPlanner(path string) (WorkflowPlanner, error) {
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -106,38 +68,16 @@ func NewWorkflowPlanner(path string, noWorkflowRecurse bool) (WorkflowPlanner, e
 
 	if fi.IsDir() {
 		log.Debugf("Loading workflows from '%s'", path)
-		if noWorkflowRecurse {
-			files, err := ioutil.ReadDir(path)
-			if err != nil {
-				return nil, err
-			}
+		files, err := ioutil.ReadDir(path)
+		if err != nil {
+			return nil, err
+		}
 
-			for _, v := range files {
-				workflows = append(workflows, WorkflowFiles{
-					dirPath:          path,
-					workflowFileInfo: v,
-				})
-			}
-		} else {
-			log.Debug("Loading workflows recursively")
-			if err := filepath.Walk(path,
-				func(p string, f os.FileInfo, err error) error {
-					if err != nil {
-						return err
-					}
-
-					if !f.IsDir() {
-						log.Debugf("Found workflow '%s' in '%s'", f.Name(), p)
-						workflows = append(workflows, WorkflowFiles{
-							dirPath:          filepath.Dir(p),
-							workflowFileInfo: f,
-						})
-					}
-
-					return nil
-				}); err != nil {
-				return nil, err
-			}
+		for _, v := range files {
+			workflows = append(workflows, WorkflowFiles{
+				dirPath:          path,
+				workflowFileInfo: v,
+			})
 		}
 	} else {
 		log.Debugf("Loading workflow '%s'", path)
@@ -153,61 +93,24 @@ func NewWorkflowPlanner(path string, noWorkflowRecurse bool) (WorkflowPlanner, e
 	}
 
 	wp := new(workflowPlanner)
+	wp.workflows = map[string]*Workflow{}
 	for _, wf := range workflows {
 		ext := filepath.Ext(wf.workflowFileInfo.Name())
 		if ext == ".yml" || ext == ".yaml" {
-			f, err := os.Open(filepath.Join(wf.dirPath, wf.workflowFileInfo.Name()))
+			f, err := os.ReadFile(filepath.Join(wf.dirPath, wf.workflowFileInfo.Name()))
 			if err != nil {
 				return nil, err
 			}
 
-			log.Debugf("Reading workflow '%s'", f.Name())
-			workflow, err := ReadWorkflow(f)
-			if err != nil {
-				f.Close()
-				if err == io.EOF {
-					return nil, errors.WithMessagef(err, "unable to read workflow, %s file is empty", wf.workflowFileInfo.Name())
-				}
-				return nil, err
-			}
-			_, err = f.Seek(0, 0)
-			if err != nil {
-				f.Close()
-				return nil, errors.WithMessagef(err, "error occurring when resetting io pointer, %s", wf.workflowFileInfo.Name())
-			}
-			log.Debugf("Correcting if statements '%s'", f.Name())
-			content, err := ioutil.ReadFile(filepath.Join(wf.dirPath, wf.workflowFileInfo.Name()))
-			if err != nil {
-				return nil, errors.WithMessagef(err, "error occurring when reading file, %s", wf.workflowFileInfo.Name())
-			}
+			log.Debugf("Reading workflow '%s'", wf.workflowFileInfo.Name())
+			w, errs := ReadWorkflow(f)
+			log.Errorf("%#v", errs)
 
-			err = FixIfStatement(content, workflow)
-			if err != nil {
-				return nil, err
-			}
-
-			workflow.File = wf.workflowFileInfo.Name()
-			if workflow.Name == "" {
-				workflow.Name = wf.workflowFileInfo.Name()
-			}
-
-			jobNameRegex := regexp.MustCompile(`^([[:alpha:]_][[:alnum:]_\-]*)$`)
-			for k := range workflow.Jobs {
-				if ok := jobNameRegex.MatchString(k); !ok {
-					return nil, fmt.Errorf("workflow is not valid. '%s': Job name '%s' is invalid. Names must start with a letter or '_' and contain only alphanumeric characters, '-', or '_'", workflow.Name, k)
-				}
-			}
-
-			wp.workflows = append(wp.workflows, workflow)
-			f.Close()
+			wp.workflows[wf.workflowFileInfo.Name()] = &w
 		}
 	}
 
 	return wp, nil
-}
-
-type workflowPlanner struct {
-	workflows []*Workflow
 }
 
 // PlanEvent builds a new list of runs to execute in parallel for an event name
@@ -217,10 +120,10 @@ func (wp *workflowPlanner) PlanEvent(eventName string) *Plan {
 		log.Debugf("no events found for workflow: %s", eventName)
 	}
 
-	for _, w := range wp.workflows {
-		for _, e := range w.On() {
-			if e == eventName {
-				plan.mergeStages(createStages(w, w.GetJobIDs()...))
+	for f, w := range wp.workflows {
+		for _, e := range w.On {
+			if e.EventName() == eventName {
+				plan.mergeStages(createStages(f, w, w.GetJobIDs()...))
 			}
 		}
 	}
@@ -234,19 +137,19 @@ func (wp *workflowPlanner) PlanJob(jobName string) *Plan {
 		log.Debugf("no jobs found for workflow: %s", jobName)
 	}
 
-	for _, w := range wp.workflows {
-		plan.mergeStages(createStages(w, jobName))
+	for f, w := range wp.workflows {
+		plan.mergeStages(createStages(f, w, jobName))
 	}
 	return plan
 }
 
 // GetEvents gets all the events in the workflows file
-func (wp *workflowPlanner) GetEvents() []string {
-	events := make([]string, 0)
+func (wp *workflowPlanner) GetEvents() []Event {
+	events := make([]Event, 0)
 	for _, w := range wp.workflows {
 		found := false
 		for _, e := range events {
-			for _, we := range w.On() {
+			for _, we := range w.On {
 				if e == we {
 					found = true
 					break
@@ -258,13 +161,13 @@ func (wp *workflowPlanner) GetEvents() []string {
 		}
 
 		if !found {
-			events = append(events, w.On()...)
+			events = append(events, w.On...)
 		}
 	}
 
 	// sort the list based on depth of dependencies
 	sort.Slice(events, func(i, j int) bool {
-		return events[i] < events[j]
+		return events[i].EventName() < events[j].EventName()
 	})
 
 	return events
@@ -310,7 +213,7 @@ func (p *Plan) mergeStages(stages []*Stage) {
 	p.Stages = newStages
 }
 
-func createStages(w *Workflow, jobIDs ...string) []*Stage {
+func createStages(f string, w *Workflow, jobIDs ...string) []*Stage {
 	// first, build a list of all the necessary jobs to run, and their dependencies
 	jobDependencies := make(map[string][]string)
 	for len(jobIDs) > 0 {
@@ -319,8 +222,8 @@ func createStages(w *Workflow, jobIDs ...string) []*Stage {
 			// make sure we haven't visited this job yet
 			if _, ok := jobDependencies[jID]; !ok {
 				if job := w.GetJob(jID); job != nil {
-					jobDependencies[jID] = job.Needs()
-					newJobIDs = append(newJobIDs, job.Needs()...)
+					jobDependencies[jID] = job.GetNeeds()
+					newJobIDs = append(newJobIDs, job.GetNeeds()...)
 				}
 			}
 		}
@@ -335,8 +238,9 @@ func createStages(w *Workflow, jobIDs ...string) []*Stage {
 			// make sure all deps are in the graph already
 			if listInStages(jDeps, stages...) {
 				stage.Runs = append(stage.Runs, &Run{
-					Workflow: w,
+					File:     f,
 					JobID:    jID,
+					Workflow: w,
 				})
 				delete(jobDependencies, jID)
 			}

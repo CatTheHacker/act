@@ -24,11 +24,11 @@ func TestSetOutput(t *testing.T) {
 	a := assert.New(t)
 	ctx := context.Background()
 	rc := new(RunContext)
-	rc.StepResults = make(map[string]*stepResult)
+	rc.StepResults = make(map[string]*StepResult)
 	handler := rc.commandHandler(ctx)
 
 	rc.CurrentStep = "my-step"
-	rc.StepResults[rc.CurrentStep] = &stepResult{
+	rc.StepResults[rc.CurrentStep] = &StepResult{
 		Outputs: make(map[string]string),
 	}
 	handler("::set-output name=x::valz\n")

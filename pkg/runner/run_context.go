@@ -26,19 +26,27 @@ const ActPath string = "/var/run/act"
 
 // RunContext contains info about current job
 type RunContext struct {
+	File           string
 	Name           string
 	Config         *Config
-	Matrix         map[string]interface{}
+	Matrix         map[string]string
 	Run            *model.Run
 	EventJSON      string
 	Env            map[string]string
 	ExtraPath      []string
 	CurrentStep    string
-	StepResults    map[string]*stepResult
+	StepResults    map[string]*StepResult
 	ExprEval       ExpressionEvaluator
 	JobContainer   container.Container
 	OutputMappings map[MappableOutput]MappableOutput
 	JobName        string
+	JobContext
+	GithubContext
+	RunContextInterface
+}
+
+type RunContextInterface interface {
+	GetGithubContext() *GithubContext
 }
 
 type MappableOutput struct {
@@ -46,11 +54,18 @@ type MappableOutput struct {
 	OutputName string
 }
 
-func (rc *RunContext) String() string {
-	return fmt.Sprintf("%s/%s", rc.Run.Workflow.Name, rc.Name)
+func (rc *RunContext) GetName() string {
+	if n := rc.Run.Workflow.String(); n != "" {
+		return n
+	}
+	return rc.Run.File
 }
 
-type stepResult struct {
+func (rc *RunContext) String() string {
+	return fmt.Sprintf("%s/%s", rc.GetName(), rc.Name)
+}
+
+type StepResult struct {
 	Success bool              `json:"success"`
 	Outputs map[string]string `json:"outputs"`
 }
@@ -58,7 +73,18 @@ type stepResult struct {
 // GetEnv returns the env for the context
 func (rc *RunContext) GetEnv() map[string]string {
 	if rc.Env == nil {
-		rc.Env = mergeMaps(rc.Config.Env, rc.Run.Workflow.Env, rc.Run.Job().Environment())
+		maps := make([]map[string]string, 3)
+		common.LogMap(context.TODO(), "GetEnv -> rc.Config.Env", rc.Config.Env)
+		maps = append(maps, rc.Config.Env)
+		if rc.Run.Workflow.Env != nil {
+			common.LogMap(context.TODO(), "GetEnv -> rc.Run.Workflow.Env", model.ConvertMap(rc.Run.Workflow.Env.Vars))
+			maps = append(maps, model.ConvertMap(rc.Run.Workflow.Env.Vars))
+		}
+		if rc.Run.Job().Env != nil {
+			common.LogMap(context.TODO(), "GetEnv -> rc.Run.Job().Env.Vars", model.ConvertMap(rc.Run.Job().Env.Vars))
+			maps = append(maps, model.ConvertMap(rc.Run.Job().Env.Vars))
+		}
+		rc.Env = mergeMaps(maps...)
 	}
 	rc.Env["ACT"] = "true"
 	return rc.Env
@@ -215,9 +241,9 @@ func (rc *RunContext) interpolateOutputs() common.Executor {
 	return func(ctx context.Context) error {
 		ee := rc.NewExpressionEvaluator()
 		for k, v := range rc.Run.Job().Outputs {
-			interpolated := ee.Interpolate(v)
-			if v != interpolated {
-				rc.Run.Job().Outputs[k] = interpolated
+			interpolated := ee.Interpolate(v.Value.Value)
+			if v.Value.Value != interpolated {
+				rc.Run.Job().Outputs[k] = &model.Output{Value: &model.String{Value: interpolated}}
 			}
 		}
 		return nil
@@ -230,18 +256,22 @@ func (rc *RunContext) Executor() common.Executor {
 
 	steps = append(steps, func(ctx context.Context) error {
 		if len(rc.Matrix) > 0 {
-			common.Logger(ctx).Infof("\U0001F9EA  Matrix: %v", rc.Matrix)
+			common.LogMap(ctx, "\U0001F9EA  Matrix:", rc.Matrix)
+			// common.Logger(ctx).Infof(" %#v", )
 		}
 		return nil
 	})
 
 	steps = append(steps, rc.startJobContainer())
 
+	log.Debug(rc.Name)
+
 	for i, step := range rc.Run.Job().Steps {
-		if step.ID == "" {
-			step.ID = fmt.Sprintf("%d", i)
+		s := model.Step(*step)
+		if s.GetID() != "" {
+			s.ID = &model.String{Value: fmt.Sprintf("%d", i)}
 		}
-		steps = append(steps, rc.newStepExecutor(step))
+		steps = append(steps, rc.newStepExecutor(&s))
 	}
 	steps = append(steps, rc.stopJobContainer())
 
@@ -254,31 +284,38 @@ func (rc *RunContext) Executor() common.Executor {
 }
 
 func (rc *RunContext) newStepExecutor(step *model.Step) common.Executor {
+	s := model.Step(*step)
+
 	sc := &StepContext{
 		RunContext: rc,
-		Step:       step,
+		Step:       &s,
 	}
 	return func(ctx context.Context) error {
-		rc.CurrentStep = sc.Step.ID
-		rc.StepResults[rc.CurrentStep] = &stepResult{
+		rc.CurrentStep = sc.Step.GetID()
+		rc.StepResults[rc.CurrentStep] = &StepResult{
 			Success: true,
 			Outputs: make(map[string]string),
 		}
-		runStep, err := rc.EvalBool(sc.Step.If.Value)
 
-		if err != nil {
-			common.Logger(ctx).Errorf("  \u274C  Error in if: expression - %s", sc.Step)
-			exprEval, err := sc.setupEnv(ctx)
+		runStep := true
+		if sc.Step.If != nil {
+			var err error
+			runStep, err = rc.EvalBool(sc.Step.If.Value)
+
 			if err != nil {
+				common.Logger(ctx).Errorf("  \u274C  Error in if: expression - %#v", sc.Step)
+				exprEval, err := sc.setupEnv(ctx)
+				if err != nil {
+					return err
+				}
+				rc.ExprEval = exprEval
+				rc.StepResults[rc.CurrentStep].Success = false
 				return err
 			}
-			rc.ExprEval = exprEval
-			rc.StepResults[rc.CurrentStep].Success = false
-			return err
 		}
 
 		if !runStep {
-			log.Debugf("Skipping step '%s' due to '%s'", sc.Step.String(), sc.Step.If.Value)
+			log.Debugf("Skipping step '%s' due to '%s'", sc.Step.ID.Value, sc.Step.If.Value)
 			return nil
 		}
 
@@ -295,7 +332,7 @@ func (rc *RunContext) newStepExecutor(step *model.Step) common.Executor {
 		} else {
 			common.Logger(ctx).Errorf("  \u274C  Failure - %s", sc.Step)
 
-			if sc.Step.ContinueOnError {
+			if sc.Step.GetContinueOnError() {
 				common.Logger(ctx).Infof("Failed but continue next step")
 				err = nil
 				rc.StepResults[rc.CurrentStep].Success = true
@@ -310,17 +347,17 @@ func (rc *RunContext) newStepExecutor(step *model.Step) common.Executor {
 func (rc *RunContext) platformImage() string {
 	job := rc.Run.Job()
 
-	c := job.Container()
+	c := job.Container
 	if c != nil {
-		return rc.ExprEval.Interpolate(c.Image)
+		return rc.ExprEval.Interpolate(c.Image.Value)
 	}
 
-	if job.RunsOn() == nil {
+	if job.RunsOn == nil {
 		log.Errorf("'runs-on' key not defined in %s", rc.String())
 	}
 
-	for _, runnerLabel := range job.RunsOn() {
-		platformName := rc.ExprEval.Interpolate(runnerLabel)
+	for _, runnerLabel := range job.RunsOn.Labels {
+		platformName := rc.ExprEval.Interpolate(runnerLabel.Value)
 		image := rc.Config.Platforms[strings.ToLower(platformName)]
 		if image != "" {
 			return image
@@ -331,30 +368,31 @@ func (rc *RunContext) platformImage() string {
 }
 
 func (rc *RunContext) hostname() string {
-	job := rc.Run.Job()
-	c := job.Container()
-	if c == nil {
-		return ""
+	if job := rc.Run.Job(); job != nil {
+		if c := job.Container; c != nil {
+			optionsFlags := pflag.NewFlagSet("container_options", pflag.ContinueOnError)
+			hostname := optionsFlags.StringP("hostname", "h", "", "")
+			optionsArgs, err := shlex.Split(c.Options.Value)
+			if err != nil {
+				log.Warnf("Cannot parse container options: %#v", c.Options)
+				return ""
+			}
+			if err = optionsFlags.Parse(optionsArgs); err != nil {
+				log.Warnf("Cannot parse container options: %#v", c.Options)
+				return ""
+			}
+			return *hostname
+		}
 	}
-
-	optionsFlags := pflag.NewFlagSet("container_options", pflag.ContinueOnError)
-	hostname := optionsFlags.StringP("hostname", "h", "", "")
-	optionsArgs, err := shlex.Split(c.Options)
-	if err != nil {
-		log.Warnf("Cannot parse container options: %s", c.Options)
-		return ""
-	}
-	err = optionsFlags.Parse(optionsArgs)
-	if err != nil {
-		log.Warnf("Cannot parse container options: %s", c.Options)
-		return ""
-	}
-	return *hostname
+	return ""
 }
 
 func (rc *RunContext) isEnabled(ctx context.Context) bool {
 	job := rc.Run.Job()
 	l := common.Logger(ctx)
+	if job.If == nil {
+		job.If = &model.String{Value: "true"}
+	}
 	runJob, err := rc.EvalBool(job.If.Value)
 	if err != nil {
 		common.Logger(ctx).Errorf("  \u274C  Error in if: expression - %s", job.Name)
@@ -367,12 +405,12 @@ func (rc *RunContext) isEnabled(ctx context.Context) bool {
 
 	img := rc.platformImage()
 	if img == "" {
-		if job.RunsOn() == nil {
+		if job.RunsOn == nil {
 			log.Errorf("'runs-on' key not defined in %s", rc.String())
 		}
 
-		for _, runnerLabel := range job.RunsOn() {
-			platformName := rc.ExprEval.Interpolate(runnerLabel)
+		for _, runnerLabel := range job.RunsOn.Labels {
+			platformName := rc.ExprEval.Interpolate(runnerLabel.Value)
 			l.Infof("\U0001F6A7  Skipping unsupported platform -- Try running with `-P %+v=...`", platformName)
 		}
 		return false
@@ -481,7 +519,7 @@ func trimToLen(s string, l int) string {
 	return s
 }
 
-type jobContext struct {
+type JobContext struct {
 	Status    string `json:"status"`
 	Container struct {
 		ID      string `json:"id"`
@@ -492,7 +530,7 @@ type jobContext struct {
 	} `json:"services"`
 }
 
-func (rc *RunContext) getJobContext() *jobContext {
+func (rc *RunContext) getJobContext() *JobContext {
 	jobStatus := "success"
 	for _, stepStatus := range rc.StepResults {
 		if !stepStatus.Success {
@@ -500,16 +538,16 @@ func (rc *RunContext) getJobContext() *jobContext {
 			break
 		}
 	}
-	return &jobContext{
+	return &JobContext{
 		Status: jobStatus,
 	}
 }
 
-func (rc *RunContext) getStepsContext() map[string]*stepResult {
+func (rc *RunContext) getStepsContext() map[string]*StepResult {
 	return rc.StepResults
 }
 
-type githubContext struct {
+type GithubContext struct {
 	Event            map[string]interface{} `json:"event"`
 	EventPath        string                 `json:"event_path"`
 	Workflow         string                 `json:"workflow"`
@@ -536,11 +574,11 @@ type githubContext struct {
 	RunnerTrackingID string                 `json:"runner_tracking_id"`
 }
 
-func (rc *RunContext) getGithubContext() *githubContext {
-	ghc := &githubContext{
+func (rc *RunContext) GetGithubContext() *GithubContext {
+	ghc := &GithubContext{
 		Event:            make(map[string]interface{}),
 		EventPath:        ActPath + "/workflow/event.json",
-		Workflow:         rc.Run.Workflow.Name,
+		Workflow:         rc.GetName(),
 		RunID:            rc.Config.Env["GITHUB_RUN_ID"],
 		RunNumber:        rc.Config.Env["GITHUB_RUN_NUMBER"],
 		Actor:            rc.Config.Actor,
@@ -613,7 +651,7 @@ func (rc *RunContext) getGithubContext() *githubContext {
 		if err != nil {
 			log.Warningf("unable to get git ref: %v", err)
 		} else {
-			log.Debugf("using github ref: %s", ref)
+			log.Tracef("using github ref: %s", ref)
 			ghc.Ref = ref
 		}
 
@@ -633,27 +671,20 @@ func (rc *RunContext) getGithubContext() *githubContext {
 	return ghc
 }
 
-func (ghc *githubContext) isLocalCheckout(step *model.Step) bool {
-	if step.Type() == model.StepTypeInvalid {
-		// This will be errored out by the executor later, we need this here to avoid a null panic though
+func (ghc *GithubContext) isLocalCheckout(s *model.Step) bool {
+	if s.Type() != model.StepTypeUsesActionRemote {
 		return false
 	}
-	if step.Type() != model.StepTypeUsesActionRemote {
-		return false
-	}
-	remoteAction := newRemoteAction(step.Uses)
-	if remoteAction == nil {
-		// IsCheckout() will nil panic if we dont bail out early
-		return false
-	}
-	if !remoteAction.IsCheckout() {
+	remoteAction := newRemoteAction(s.Uses())
+	if remoteAction == nil && !remoteAction.IsCheckout() {
 		return false
 	}
 
-	if repository, ok := step.With["repository"]; ok && repository != ghc.Repository {
+	with := s.With()
+	if repository, ok := with["repository"]; ok && repository != ghc.Repository {
 		return false
 	}
-	if repository, ok := step.With["ref"]; ok && repository != ghc.Ref {
+	if repository, ok := with["ref"]; ok && repository != ghc.Ref {
 		return false
 	}
 	return true
@@ -709,7 +740,7 @@ func withDefaultBranch(b string, event map[string]interface{}) map[string]interf
 }
 
 func (rc *RunContext) withGithubEnv(env map[string]string) map[string]string {
-	github := rc.getGithubContext()
+	github := rc.GetGithubContext()
 	env["CI"] = "true"
 	env["GITHUB_ENV"] = ActPath + "/workflow/envs.txt"
 	env["GITHUB_PATH"] = ActPath + "/workflow/paths.txt"
@@ -752,17 +783,15 @@ func (rc *RunContext) withGithubEnv(env map[string]string) map[string]string {
 	}
 
 	job := rc.Run.Job()
-	if job.RunsOn() != nil {
-		for _, runnerLabel := range job.RunsOn() {
-			platformName := rc.ExprEval.Interpolate(runnerLabel)
-			if platformName != "" {
-				if platformName == "ubuntu-latest" {
-					// hardcode current ubuntu-latest since we have no way to check that 'on the fly'
-					env["ImageOS"] = "ubuntu20"
-				} else {
-					platformName = strings.SplitN(strings.Replace(platformName, `-`, ``, 1), `.`, 2)[0]
-					env["ImageOS"] = platformName
-				}
+	for _, runnerLabel := range job.GetRunsOn() {
+		platformName := rc.ExprEval.Interpolate(runnerLabel)
+		if platformName != "" {
+			if platformName == "ubuntu-latest" {
+				// hardcode current ubuntu-latest since we have no way to check that 'on the fly'
+				env["ImageOS"] = "ubuntu20"
+			} else {
+				platformName = strings.SplitN(strings.Replace(platformName, `-`, ``, 1), `.`, 2)[0]
+				env["ImageOS"] = platformName
 			}
 		}
 	}
@@ -785,10 +814,14 @@ func setActionRuntimeVars(rc *RunContext, env map[string]string) {
 }
 
 func (rc *RunContext) localCheckoutPath() (string, bool) {
-	ghContext := rc.getGithubContext()
+	ghContext := rc.GetGithubContext()
 	for _, step := range rc.Run.Job().Steps {
-		if ghContext.isLocalCheckout(step) {
-			return step.With["path"], true
+		s := model.Step(*step)
+		if ghContext.isLocalCheckout(&s) {
+			log.Debug("is local checkout")
+			if with := s.With(); with != nil {
+				return with["path"], true
+			}
 		}
 	}
 	return "", false
