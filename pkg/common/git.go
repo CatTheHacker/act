@@ -55,7 +55,7 @@ func FindGitRevision(file string) (shortSha string, sha string, err error) {
 		refBuf = []byte(ref)
 	}
 
-	log.Debugf("Found revision: %s", refBuf)
+	log.Tracef("Found revision: %s", refBuf)
 	return string(refBuf[:7]), strings.TrimSpace(string(refBuf)), nil
 }
 
@@ -65,14 +65,14 @@ func FindGitRef(file string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	log.Debugf("Loading revision from git directory '%s'", gitDir)
+	log.Tracef("Loading revision from git directory '%s'", gitDir)
 
 	_, ref, err := FindGitRevision(file)
 	if err != nil {
 		return "", err
 	}
 
-	log.Debugf("HEAD points to '%s'", ref)
+	log.Tracef("HEAD points to '%s'", ref)
 
 	// Prefer the git library to iterate over the references and find a matching tag or branch.
 	var refTag = ""
@@ -134,7 +134,7 @@ func findGitPrettyRef(head, root, sub string) (string, error) {
 		if head == pointsTo {
 			// On Windows paths are separated with backslash character so they should be replaced to provide proper git refs format
 			name = strings.TrimPrefix(strings.ReplaceAll(strings.Replace(path, root, "", 1), `\`, `/`), "/")
-			log.Debugf("HEAD matches %s", name)
+			log.Tracef("HEAD matches %s", name)
 		}
 		return nil
 	})
@@ -156,7 +156,7 @@ func findGitRemoteURL(file string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	log.Debugf("Loading slug from git directory '%s'", gitDir)
+	log.Tracef("Loading slug from git directory '%s'", gitDir)
 
 	gitconfig, err := ini.InsensitiveLoad(fmt.Sprintf("%s/config", gitDir))
 	if err != nil {
@@ -350,7 +350,7 @@ func NewGitCloneExecutor(input NewGitCloneExecutorInput) Executor {
 		// Repos on disk point to commit hashes, and need to checkout input.Ref before
 		// we try and pull down any changes
 		if hash.String() != input.Ref && refType == "branch" {
-			logger.Debugf("Provided ref is not a sha. Checking out branch before pulling changes")
+			logger.Trace("Provided ref is not a sha. Checking out branch before pulling changes")
 			sourceRef := plumbing.ReferenceName(path.Join("refs", "remotes", "origin", input.Ref))
 			if err = w.Checkout(&git.CheckoutOptions{
 				Branch: sourceRef,
@@ -372,12 +372,12 @@ func NewGitCloneExecutor(input NewGitCloneExecutorInput) Executor {
 		}
 
 		if err = w.Pull(&pullOptions); err != nil && err.Error() != "already up-to-date" {
-			logger.Debugf("Unable to pull %s: %v", refName, err)
+			logger.Tracef("Unable to pull %s: %v", refName, err)
 		}
-		logger.Debugf("Cloned %s to %s", input.URL, input.Dir)
+		logger.Tracef("Cloned %s to %s", input.URL, input.Dir)
 
 		if hash.String() != input.Ref && refType == "branch" {
-			logger.Debugf("Provided ref is not a sha. Updating branch ref after pull")
+			logger.Trace("Provided ref is not a sha. Updating branch ref after pull")
 			if hash, err = r.ResolveRevision(rev); err != nil {
 				logger.Errorf("Unable to resolve %s: %v", input.Ref, err)
 				return err

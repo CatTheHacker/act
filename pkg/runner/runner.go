@@ -9,8 +9,11 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/wayneashleyberry/truecolor/pkg/color"
+
 	"github.com/nektos/act/pkg/common"
 	"github.com/nektos/act/pkg/model"
+
 	log "github.com/sirupsen/logrus"
 )
 
@@ -117,13 +120,16 @@ func (runner *runnerImpl) NewPlanExecutor(plan *model.Plan) common.Executor {
 
 	pipeline := make([]common.Executor, 0)
 	for s, stage := range plan.Stages {
+		log.Debugf("Stage %s:", color.Color(255, 165, 00).Sprint(s))
 		stageExecutor := make([]common.Executor, 0)
 		for r, run := range stage.Runs {
+			log.Debugf("Run %s:", color.Color(255, 165, 00).Sprint(r))
 			job := run.Job()
 			matrixes := job.GetMatrixes()
+
 			maxParallel := 4
-			if job.Strategy != nil {
-				maxParallel = job.Strategy.MaxParallel
+			if job.Strategy != nil && job.Strategy.MaxParallel != nil {
+				maxParallel = job.Strategy.MaxParallel.Value
 			}
 
 			if len(matrixes) < maxParallel {
@@ -183,8 +189,9 @@ func handleFailure(plan *model.Plan) common.Executor {
 	}
 }
 
-func (runner *runnerImpl) newRunContext(run *model.Run, matrix map[string]interface{}) *RunContext {
+func (runner *runnerImpl) newRunContext(run *model.Run, matrix map[string]string) *RunContext {
 	rc := &RunContext{
+		File:        run.File,
 		Config:      runner.config,
 		Run:         run,
 		EventJSON:   runner.eventJSON,

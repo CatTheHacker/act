@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/nektos/act/pkg/model"
 	"github.com/robertkrimen/otto"
 	log "github.com/sirupsen/logrus"
 )
@@ -69,7 +70,7 @@ func (ee *expressionEvaluator) Evaluate(in string) (string, bool, error) {
 	}
 	re := ee.Rewrite(in)
 	if re != in {
-		log.Debugf("Evaluating '%s' instead of '%s'", re, in)
+		log.Tracef("Evaluating '%s' instead of '%s'", re, in)
 	}
 
 	val, err := ee.vm.Run(re)
@@ -383,7 +384,7 @@ func (rc *RunContext) vmSuccess() func(*otto.Otto) {
 			jobNeeds := rc.getNeedsTransitive(rc.Run.Job())
 
 			for _, needs := range jobNeeds {
-				if jobs[needs].Result != "success" {
+				if jobs[needs.Value].Result != "success" {
 					return false
 				}
 			}
@@ -400,7 +401,7 @@ func (rc *RunContext) vmFailure() func(*otto.Otto) {
 			jobNeeds := rc.getNeedsTransitive(rc.Run.Job())
 
 			for _, needs := range jobNeeds {
-				if jobs[needs].Result == "failure" {
+				if jobs[needs.Value].Result == "failure" {
 					return true
 				}
 			}
@@ -434,14 +435,14 @@ func (rc *RunContext) vmGithub() func(*otto.Otto) {
 func (rc *RunContext) vmEnv() func(*otto.Otto) {
 	return func(vm *otto.Otto) {
 		env := rc.GetEnv()
-		log.Debugf("context env => %v", env)
+		log.Tracef("context env => %v", env)
 		_ = vm.Set("env", env)
 	}
 }
 
 func (sc *StepContext) vmEnv() func(*otto.Otto) {
 	return func(vm *otto.Otto) {
-		log.Debugf("context env => %v", sc.Env)
+		log.Tracef("context env => %v", sc.Env)
 		_ = vm.Set("env", sc.Env)
 	}
 }
@@ -454,17 +455,17 @@ func (rc *RunContext) vmInputs() func(*otto.Otto) {
 
 func (sc *StepContext) vmNeeds() func(*otto.Otto) {
 	jobs := sc.RunContext.Run.Workflow.Jobs
-	jobNeeds := sc.RunContext.Run.Job().Needs()
+	jobNeeds := sc.RunContext.Run.Job().Needs
 
-	using := make(map[string]map[string]map[string]string)
+	using := make(map[string]map[string]map[string]*model.Output)
 	for _, needs := range jobNeeds {
-		using[needs] = map[string]map[string]string{
-			"outputs": jobs[needs].Outputs,
+		using[needs.Value] = map[string]map[string]*model.Output{
+			"outputs": jobs[needs.Value].Outputs,
 		}
 	}
 
 	return func(vm *otto.Otto) {
-		log.Debugf("context needs => %v", using)
+		log.Tracef("context needs => %v", using)
 		_ = vm.Set("needs", using)
 	}
 }
@@ -486,21 +487,21 @@ func (sc *StepContext) vmFailure() func(*otto.Otto) {
 }
 
 type vmNeedsStruct struct {
-	Outputs map[string]string `json:"outputs"`
-	Result  string            `json:"result"`
+	Outputs map[string]*model.Output `json:"outputs"`
+	Result  string                   `json:"result"`
 }
 
 func (rc *RunContext) vmNeeds() func(*otto.Otto) {
 	return func(vm *otto.Otto) {
 		needsFunc := func() otto.Value {
 			jobs := rc.Run.Workflow.Jobs
-			jobNeeds := rc.Run.Job().Needs()
+			jobNeeds := rc.Run.Job().Needs
 
 			using := make(map[string]vmNeedsStruct)
 			for _, needs := range jobNeeds {
-				using[needs] = vmNeedsStruct{
-					Outputs: jobs[needs].Outputs,
-					Result:  jobs[needs].Result,
+				using[needs.Value] = vmNeedsStruct{
+					Outputs: jobs[needs.Value].Outputs,
+					Result:  jobs[needs.Value].Result,
 				}
 			}
 

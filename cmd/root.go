@@ -183,7 +183,7 @@ func newRunCommand(ctx context.Context, input *Input) func(*cobra.Command, []str
 		secrets := newSecrets(input.secrets)
 		_ = readEnvs(input.Secretfile(), secrets)
 
-		planner, err := model.NewWorkflowPlanner(input.WorkflowsPath(), input.noWorkflowRecurse)
+		planner, err := model.NewWorkflowPlanner(input.WorkflowsPath())
 		if err != nil {
 			return err
 		}
@@ -195,7 +195,7 @@ func newRunCommand(ctx context.Context, input *Input) func(*cobra.Command, []str
 			// set default event type to first event
 			// this way user dont have to specify the event.
 			log.Debugf("Using detected workflow event: %s", events[0])
-			eventName = events[0]
+			eventName = events[0].EventName()
 		} else {
 			if len(args) > 0 {
 				eventName = args[0]

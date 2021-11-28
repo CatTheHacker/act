@@ -51,7 +51,7 @@ func createIfTestStepContext(t *testing.T, input string) *StepContext {
 			Run: &model.Run{
 				JobID: "job1",
 				Workflow: &model.Workflow{
-					Name: "workflow1",
+					Name: &model.String{Value: "workflow1"},
 					Jobs: map[string]*model.Job{
 						"job1": createJob(t, `runs-on: ubuntu-latest`, ""),
 					},
