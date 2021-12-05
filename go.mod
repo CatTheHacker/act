@@ -5,10 +5,9 @@ go 1.16
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.2
 	github.com/Masterminds/semver v1.5.0
-	github.com/Microsoft/hcsshim v0.8.22 // indirect
 	github.com/ProtonMail/go-crypto v0.0.0-20210920160938-87db9fbc61c7 // indirect
 	github.com/andreaskoch/go-fswatch v1.0.0
-	github.com/containerd/containerd v1.5.5 // indirect
+	github.com/containerd/containerd v1.5.8 // indirect
 	github.com/containerd/continuity v0.2.0 // indirect
 	github.com/docker/cli v20.10.10+incompatible
 	github.com/docker/distribution v2.7.1+incompatible
@@ -27,8 +26,7 @@ require (
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d // indirect
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/moby/buildkit v0.9.2
-	github.com/opencontainers/image-spec v1.0.1
-	github.com/opencontainers/runc v1.0.2 // indirect
+	github.com/opencontainers/image-spec v1.0.2
 	github.com/opencontainers/selinux v1.10.0
 	github.com/pkg/errors v0.9.1
 	github.com/robertkrimen/otto v0.0.0-20210614181706-373ff5438452
