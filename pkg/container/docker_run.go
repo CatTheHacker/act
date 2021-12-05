@@ -43,6 +43,7 @@ type NewContainerInput struct {
 	Hostname    string
 	Entrypoint  []string
 	Cmd         []string
+	User        string
 	WorkingDir  string
 	Env         []string
 	Binds       []string
@@ -179,7 +180,7 @@ func (cr *containerReference) Copy(destPath string, files ...*FileEntry) common.
 func (cr *containerReference) CopyDir(destPath string, srcPath string, useGitIgnore bool) common.Executor {
 	return common.NewPipelineExecutor(
 		common.NewInfoExecutor("%sdocker cp src=%s dst=%s", logPrefix, srcPath, destPath),
-		cr.Exec([]string{"mkdir", "-p", destPath}, nil, "", ""),
+		cr.Exec([]string{"mkdir", "-m", "0777", "-p", destPath}, nil, cr.input.User, ""),
 		cr.copyDir(destPath, srcPath, useGitIgnore),
 	).IfNot(common.Dryrun)
 }
@@ -343,6 +344,7 @@ func (cr *containerReference) create(capAdd []string, capDrop []string) common.E
 		input := cr.input
 
 		config := &container.Config{
+			User:       input.User,
 			Hostname:   input.Hostname,
 			Image:      input.Image,
 			WorkingDir: input.WorkingDir,

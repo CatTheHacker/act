@@ -227,6 +227,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			Privileged: rc.Config.Privileged,
 			UsernsMode: rc.Config.UsernsMode,
 			Platform:   rc.Config.ContainerArchitecture,
+			User:       rc.Config.ContainerUser,
 		})
 
 		if rc.Run.Job().Services == nil {
@@ -256,7 +257,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 				rc.JobContainer.ConnectToNetwork(networkName),
 			).IfBool(rc.Run.Job().Services != nil || rc.Run.Job().Container() != nil),
 			rc.JobContainer.UpdateFromEnv("/etc/environment", &rc.Env),
-			rc.JobContainer.Exec([]string{"mkdir", "-m", "0777", "-p", ActPath}, rc.Env, "root", ""),
+			rc.JobContainer.Exec([]string{"mkdir", "-m", "0777", "-p", ActPath}, rc.Env, "0", ""),
 			rc.JobContainer.CopyDir(copyToPath, rc.Config.Workdir+string(filepath.Separator)+".", rc.Config.UseGitIgnore).IfBool(copyWorkspace),
 			rc.JobContainer.Copy(ActPath+"/", &container.FileEntry{
 				Name: "workflow/event.json",
