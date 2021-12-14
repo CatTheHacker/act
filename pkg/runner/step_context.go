@@ -322,25 +322,8 @@ func (sc *StepContext) newStepContainer(ctx context.Context, image string, cmd [
 }
 
 func (sc *StepContext) runUsesContainer() common.Executor {
-	rc := sc.RunContext
-	step := sc.Step
 	return func(ctx context.Context) error {
-		image := strings.TrimPrefix(step.Uses, "docker://")
-		cmd, err := shellquote.Split(sc.RunContext.NewExpressionEvaluator().Interpolate(step.With["args"]))
-		if err != nil {
-			return err
-		}
-		entrypoint := strings.Fields(step.With["entrypoint"])
-		stepContainer := sc.newStepContainer(ctx, image, cmd, entrypoint)
-
-		return common.NewPipelineExecutor(
-			stepContainer.Pull(rc.Config.ForcePull),
-			stepContainer.Remove().IfBool(!rc.Config.ReuseContainers),
-			stepContainer.Create(rc.Config.ContainerCapAdd, rc.Config.ContainerCapDrop),
-			stepContainer.Start(true),
-		).Finally(
-			stepContainer.Remove().IfBool(!rc.Config.ReuseContainers),
-		).Finally(stepContainer.Close())(ctx)
+		return sc.execAsDocker(ctx, sc.Action, "", "", "", nil, nil, false)
 	}
 }
 
@@ -516,7 +499,7 @@ func (sc *StepContext) runAction(actionDir string, actionPath string, localActio
 			log.Debugf("executing remote job container: %s", containerArgs)
 			return rc.execJobContainer(containerArgs, sc.Env, "", "")(ctx)
 		case model.ActionRunsUsingDocker:
-			return sc.execAsDocker(ctx, action, actionName, containerActionDir, actionLocation, rc, step, localAction)
+			return sc.execAsDocker(ctx, action, actionName, containerActionDir, actionLocation, nil, step, localAction)
 		case model.ActionRunsUsingComposite:
 			return sc.execAsComposite(ctx, step, actionDir, rc, containerActionDir, actionName, actionPath, action, maybeCopyToActionDir)
 		default:
@@ -531,11 +514,15 @@ func (sc *StepContext) runAction(actionDir string, actionPath string, localActio
 
 // TODO: break out parts of function to reduce complexicity
 // nolint:gocyclo
-func (sc *StepContext) execAsDocker(ctx context.Context, action *model.Action, actionName string, containerLocation string, actionLocation string, rc *RunContext, step *model.Step, localAction bool) error {
+func (sc *StepContext) execAsDocker(ctx context.Context, action *model.Action, actionName string, containerLocation string, actionLocation string, _ *RunContext, step *model.Step, localAction bool) error {
+	rc := sc.RunContext
+
 	var prepImage common.Executor
 	var image string
-	if strings.HasPrefix(action.Runs.Image, "docker://") {
-		image = strings.TrimPrefix(action.Runs.Image, "docker://")
+	if strings.HasPrefix(sc.Step.Uses, "docker://") {
+		image = sc.Step.Uses
+	} else if strings.HasPrefix(action.Runs.Image, "docker://") {
+		image = action.Runs.Image
 	} else {
 		// "-dockeraction" enshures that "./", "./test " won't get converted to "act-:latest", "act-test-:latest" which are invalid docker image names
 		image = fmt.Sprintf("%s-dockeraction:%s", regexp.MustCompile("[^a-zA-Z0-9]").ReplaceAllString(actionName, "-"), "latest")
@@ -571,7 +558,7 @@ func (sc *StepContext) execAsDocker(ctx context.Context, action *model.Action, a
 			log.Debugf("image '%s' for architecture '%s' will be built from context '%s", image, rc.Config.ContainerArchitecture, contextDir)
 			var actionContainer container.Container
 			if localAction {
-				actionContainer = sc.RunContext.JobContainer
+				actionContainer = rc.JobContainer
 			}
 			prepImage = container.NewDockerBuildExecutor(container.NewDockerBuildExecutorInput{
 				ContextDir: contextDir,
@@ -584,28 +571,29 @@ func (sc *StepContext) execAsDocker(ctx context.Context, action *model.Action, a
 		}
 	}
 
-	cmd, err := shellquote.Split(step.With["args"])
+	image = strings.TrimPrefix(image, `docker://`)
+
+	// Image has to be present in Docker engine host before it can be inspected
+	pullImage := container.NewContainer(&container.NewContainerInput{Image: image})
+	if err := common.NewPipelineExecutor(
+		prepImage,
+		pullImage.Pull(rc.Config.ForcePull),
+	).Finally(pullImage.Close())(ctx); err != nil {
+		return err
+	}
+
+	cmd, err := sc.getDockerStepArgs(ctx)
 	if err != nil {
 		return err
 	}
-	if len(cmd) == 0 {
-		cmd = action.Runs.Args
+
+	entrypoint, err := sc.getDockerStepEntrypoint(ctx)
+	if err != nil {
+		return err
 	}
-	entrypoint := strings.Fields(step.With["entrypoint"])
-	if len(entrypoint) == 0 {
-		if action.Runs.Entrypoint != "" {
-			entrypoint, err = shellquote.Split(action.Runs.Entrypoint)
-			if err != nil {
-				return err
-			}
-		} else {
-			entrypoint = nil
-		}
-	}
+
 	stepContainer := sc.newStepContainer(ctx, image, cmd, entrypoint)
 	return common.NewPipelineExecutor(
-		prepImage,
-		stepContainer.Pull(rc.Config.ForcePull),
 		stepContainer.Remove().IfBool(!rc.Config.ReuseContainers),
 		stepContainer.Create(rc.Config.ContainerCapAdd, rc.Config.ContainerCapDrop),
 		stepContainer.Start(true),
@@ -698,6 +686,61 @@ func (sc *StepContext) populateEnvsFromInput(action *model.Action, rc *RunContex
 			sc.Env[envKey] = rc.ExprEval.Interpolate(input.Default)
 		}
 	}
+}
+
+func (sc *StepContext) getDockerStepEntrypoint(ctx context.Context) (entrypoint []string, err error) {
+	if sc.Step.With["entrypoint"] != "" {
+		if entrypoint, err = shellquote.Split(sc.Step.With["entrypoint"]); err != nil {
+			return
+		}
+	}
+
+	if len(entrypoint) == 0 {
+		switch sc.Step.Type() {
+		case model.StepTypeUsesActionLocal, model.StepTypeUsesActionRemote:
+			if sc.Action.Runs.Entrypoint != "" {
+				entrypoint, err = shellquote.Split(sc.Action.Runs.Entrypoint)
+			} else {
+				entrypoint = nil
+			}
+		case model.StepTypeUsesDockerURL:
+			var config *container.Config
+			if config, err = sc.getImageConfig(ctx, strings.TrimPrefix(sc.Step.Uses, `docker://`)); err != nil || config == nil {
+				return nil, errors.WithMessage(err, "failed to receive image config")
+			}
+			entrypoint = []string(config.Entrypoint)
+		}
+	}
+
+	return entrypoint, err
+}
+
+func (sc *StepContext) getDockerStepArgs(ctx context.Context) (args []string, err error) {
+	if sc.Step.With["args"] != "" {
+		if args, err = shellquote.Split(sc.RunContext.NewExpressionEvaluator().Interpolate(sc.Step.With["args"])); err != nil {
+			return
+		}
+	}
+
+	if len(args) == 0 {
+		switch sc.Step.Type() {
+		case model.StepTypeUsesActionLocal, model.StepTypeUsesActionRemote:
+			args = sc.Action.Runs.Args
+		case model.StepTypeUsesDockerURL:
+			var config *container.Config
+			if config, err = sc.getImageConfig(ctx, strings.TrimPrefix(sc.Step.Uses, `docker://`)); err != nil || config == nil {
+				return nil, errors.WithMessage(err, "failed to receive image config")
+			}
+			args = config.Cmd
+		}
+	}
+
+	return args, err
+}
+
+func (sc *StepContext) getImageConfig(ctx context.Context, image string) (config *container.Config, err error) {
+	err = container.NewContainer(&container.NewContainerInput{Image: image}).InspectImage(config)(ctx)
+	return
 }
 
 type remoteAction struct {

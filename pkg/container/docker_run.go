@@ -19,6 +19,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	"github.com/joho/godotenv"
 
+	"github.com/containerd/containerd/platforms"
 	"github.com/docker/cli/cli/connhelper"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -34,6 +35,9 @@ import (
 
 	"github.com/nektos/act/pkg/common"
 )
+
+// Config shadows Docker container config
+type Config = container.Config
 
 // NewContainerInput the input for the New function
 type NewContainerInput struct {
@@ -72,9 +76,11 @@ type Container interface {
 	Pull(forcePull bool) common.Executor
 	Start(attach bool) common.Executor
 	Exec(command []string, env map[string]string, user, workdir string) common.Executor
+	InspectImage(inspect *Config) common.Executor
 	UpdateFromEnv(srcPath string, env *map[string]string) common.Executor
 	UpdateFromImageEnv(env *map[string]string) common.Executor
 	UpdateFromPath(env *map[string]string) common.Executor
+	GetNodePath(ver string, path *string) common.Executor
 	Remove() common.Executor
 	Close() common.Executor
 }
@@ -166,6 +172,13 @@ func (cr *containerReference) GetContainerArchive(ctx context.Context, srcPath s
 	return a, err
 }
 
+func (cr *containerReference) InspectImage(inspect *Config) common.Executor {
+	return common.NewPipelineExecutor(
+		cr.connect(),
+		cr.inspectImageConfig(inspect),
+	).IfNot(common.Dryrun)
+}
+
 func (cr *containerReference) UpdateFromEnv(srcPath string, env *map[string]string) common.Executor {
 	return cr.extractEnv(srcPath, env).IfNot(common.Dryrun)
 }
@@ -178,6 +191,10 @@ func (cr *containerReference) UpdateFromPath(env *map[string]string) common.Exec
 	return cr.extractPath(env).IfNot(common.Dryrun)
 }
 
+func (cr *containerReference) GetNodePath(ver string, path *string) common.Executor {
+	return cr.extractNodePath(ver, path).IfNot(common.Dryrun)
+}
+
 func (cr *containerReference) Exec(command []string, env map[string]string, user, workdir string) common.Executor {
 	return common.NewPipelineExecutor(
 		common.NewInfoExecutor("%sdocker exec cmd=[%s] user=%s workdir=%s", logPrefix, strings.Join(command, " "), user, workdir),
@@ -187,6 +204,7 @@ func (cr *containerReference) Exec(command []string, env map[string]string, user
 	).IfNot(common.Dryrun)
 }
 
+// Remove force deletes container together with volumes
 func (cr *containerReference) Remove() common.Executor {
 	return common.NewPipelineExecutor(
 		cr.connect(),
@@ -334,16 +352,11 @@ func (cr *containerReference) create(capAdd []string, capDrop []string) common.E
 
 		var platSpecs *specs.Platform
 		if supportsContainerImagePlatform(cr.cli) && cr.input.Platform != "" {
-			desiredPlatform := strings.SplitN(cr.input.Platform, `/`, 2)
-
-			if len(desiredPlatform) != 2 {
-				logger.Panicf("Incorrect container platform option. %s is not a valid platform.", cr.input.Platform)
+			p, err := platforms.Parse(cr.input.Platform)
+			if err != nil {
+				log.Fatal(err)
 			}
-
-			platSpecs = &specs.Platform{
-				Architecture: desiredPlatform[1],
-				OS:           desiredPlatform[0],
-			}
+			platSpecs = &p
 		}
 		resp, err := cr.cli.ContainerCreate(ctx, config, &container.HostConfig{
 			CapAdd:      capAdd,
@@ -361,6 +374,23 @@ func (cr *containerReference) create(capAdd []string, capDrop []string) common.E
 		logger.Debugf("ENV ==> %v", input.Env)
 
 		cr.id = resp.ID
+		return nil
+	}
+}
+
+func (cr *containerReference) inspectImageConfig(inspect *Config) common.Executor {
+	return func(ctx context.Context) error {
+		logger := common.Logger(ctx)
+
+		var err error
+		data, _, err := cr.cli.ImageInspectWithRaw(ctx, cr.input.Image)
+		if err != nil {
+			logger.Error(err)
+		}
+
+		if data.Config != nil {
+			inspect = data.Config
+		}
 		return nil
 	}
 }
@@ -470,6 +500,36 @@ func (cr *containerReference) extractPath(env *map[string]string) common.Executo
 		}
 
 		env = &localEnv
+		return nil
+	}
+}
+
+func (cr *containerReference) extractNodePath(ver string, path *string) common.Executor {
+	p := *path
+	return func(ctx context.Context) error {
+		execCreate, err := cr.cli.ContainerExecCreate(ctx, cr.id, types.ExecConfig{
+			AttachStdout: true,
+			Env:          []string{"RUNNER_TOOL_CACHE=/opt/hostedtoolcache"},
+			WorkingDir:   "/opt/hostedtoolcache/node",
+			Cmd:          []string{"/bin/ls", ver + `*`},
+		})
+		if err != nil {
+			return err
+		}
+
+		execAttach, err := cr.cli.ContainerExecAttach(ctx, execCreate.ID, types.ExecStartCheck{})
+		if err != nil {
+			return err
+		}
+		defer execAttach.Close()
+
+		s := bufio.NewScanner(execAttach.Reader)
+
+		for s.Scan() {
+			log.Debugf("🐳 🐳 🐳 🐳 CONTAINER NODE FINDING : %s", s.Text())
+		}
+
+		path = &p
 		return nil
 	}
 }

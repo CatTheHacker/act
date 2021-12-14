@@ -8,7 +8,7 @@ require (
 	github.com/Microsoft/hcsshim v0.8.22 // indirect
 	github.com/ProtonMail/go-crypto v0.0.0-20210920160938-87db9fbc61c7 // indirect
 	github.com/andreaskoch/go-fswatch v1.0.0
-	github.com/containerd/containerd v1.5.5 // indirect
+	github.com/containerd/containerd v1.5.5
 	github.com/containerd/continuity v0.2.0 // indirect
 	github.com/docker/cli v20.10.10+incompatible
 	github.com/docker/distribution v2.7.1+incompatible

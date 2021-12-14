@@ -139,7 +139,7 @@ func (rc *RunContext) GetBindsAndMounts() ([]string, map[string]string) {
 
 func (rc *RunContext) startJobContainer() common.Executor {
 	image := rc.platformImage()
-	hostname := rc.hostname()
+	//hostname := rc.hostname()
 
 	return func(ctx context.Context) error {
 		rawLogger := common.Logger(ctx).WithField("raw_output", true)
@@ -185,7 +185,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			Privileged:  rc.Config.Privileged,
 			UsernsMode:  rc.Config.UsernsMode,
 			Platform:    rc.Config.ContainerArchitecture,
-			Hostname:    hostname,
+			//Hostname:    hostname,
 		})
 
 		var copyWorkspace bool
@@ -384,26 +384,52 @@ func (rc *RunContext) platformImage() string {
 	return ""
 }
 
-func (rc *RunContext) hostname() string {
-	job := rc.Run.Job()
-	c := job.Container()
+func (rc *RunContext) containerOptions() *container.Config {
+	c := rc.Run.Job().Container()
 	if c == nil {
-		return ""
+		return &container.Config{}
 	}
 
 	optionsFlags := pflag.NewFlagSet("container_options", pflag.ContinueOnError)
+
+	_ = optionsFlags.StringP("add-host", "", "", "")
 	hostname := optionsFlags.StringP("hostname", "h", "", "")
+
 	optionsArgs, err := shlex.Split(c.Options)
 	if err != nil {
 		log.Warnf("Cannot parse container options: %s", c.Options)
-		return ""
+		return &container.Config{}
 	}
 	err = optionsFlags.Parse(optionsArgs)
 	if err != nil {
 		log.Warnf("Cannot parse container options: %s", c.Options)
-		return ""
+		return &container.Config{}
 	}
-	return *hostname
+	return &container.Config{
+		Hostname:        *hostname,
+		Domainname:      "",
+		User:            "",
+		AttachStdin:     false,
+		AttachStdout:    false,
+		AttachStderr:    false,
+		Tty:             false,
+		OpenStdin:       false,
+		StdinOnce:       false,
+		Env:             []string{},
+		Cmd:             []string{},
+		ArgsEscaped:     false,
+		Image:           "",
+		Volumes:         map[string]struct{}{},
+		WorkingDir:      "",
+		Entrypoint:      []string{},
+		NetworkDisabled: false,
+		MacAddress:      "",
+		OnBuild:         []string{},
+		Labels:          map[string]string{},
+		StopSignal:      "",
+		StopTimeout:     new(int),
+		Shell:           []string{},
+	}
 }
 
 func (rc *RunContext) isEnabled(ctx context.Context) bool {
