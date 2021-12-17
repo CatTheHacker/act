@@ -519,11 +519,12 @@ func (sc *StepContext) execAsDocker(ctx context.Context, action *model.Action, a
 
 	var prepImage common.Executor
 	var image string
-	if strings.HasPrefix(sc.Step.Uses, "docker://") {
+	switch {
+	case strings.HasPrefix(sc.Step.Uses, "docker://"):
 		image = sc.Step.Uses
-	} else if strings.HasPrefix(action.Runs.Image, "docker://") {
+	case strings.HasPrefix(action.Runs.Image, "docker://"):
 		image = action.Runs.Image
-	} else {
+	default:
 		// "-dockeraction" enshures that "./", "./test " won't get converted to "act-:latest", "act-test-:latest" which are invalid docker image names
 		image = fmt.Sprintf("%s-dockeraction:%s", regexp.MustCompile("[^a-zA-Z0-9]").ReplaceAllString(actionName, "-"), "latest")
 		image = fmt.Sprintf("act-%s", strings.TrimLeft(image, "-"))

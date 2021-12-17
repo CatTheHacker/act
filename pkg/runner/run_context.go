@@ -139,7 +139,7 @@ func (rc *RunContext) GetBindsAndMounts() ([]string, map[string]string) {
 
 func (rc *RunContext) startJobContainer() common.Executor {
 	image := rc.platformImage()
-	//hostname := rc.hostname()
+	cOpts := rc.containerOptions()
 
 	return func(ctx context.Context) error {
 		rawLogger := common.Logger(ctx).WithField("raw_output", true)
@@ -168,25 +168,47 @@ func (rc *RunContext) startJobContainer() common.Executor {
 
 		binds, mounts := rc.GetBindsAndMounts()
 
-		rc.JobContainer = container.NewContainer(&container.NewContainerInput{
-			Cmd:         nil,
-			Entrypoint:  []string{"/usr/bin/tail", "-f", "/dev/null"},
-			WorkingDir:  rc.Config.ContainerWorkdir(),
-			Image:       image,
-			Username:    username,
-			Password:    password,
-			Name:        name,
-			Env:         envList,
-			Mounts:      mounts,
-			NetworkMode: "host",
-			Binds:       binds,
-			Stdout:      logWriter,
-			Stderr:      logWriter,
-			Privileged:  rc.Config.Privileged,
-			UsernsMode:  rc.Config.UsernsMode,
-			Platform:    rc.Config.ContainerArchitecture,
-			//Hostname:    hostname,
-		})
+		if cOpts != nil {
+			rc.JobContainer = container.NewContainer(&container.NewContainerInput{
+				Cmd:         cOpts.Cmd,
+				Entrypoint:  []string{"/usr/bin/tail", "-f", "/dev/null"},
+				WorkingDir:  rc.Config.ContainerWorkdir(),
+				Image:       image,
+				Username:    username,
+				Password:    password,
+				Name:        name,
+				Env:         envList,
+				Mounts:      mounts,
+				NetworkMode: "host",
+				Binds:       binds,
+				Stdout:      logWriter,
+				Stderr:      logWriter,
+				Privileged:  rc.Config.Privileged,
+				UsernsMode:  rc.Config.UsernsMode,
+				Platform:    rc.Config.ContainerArchitecture,
+				Hostname:    cOpts.Hostname,
+			})
+		} else {
+			rc.JobContainer = container.NewContainer(&container.NewContainerInput{
+				Cmd:         nil,
+				Entrypoint:  []string{"/usr/bin/tail", "-f", "/dev/null"},
+				WorkingDir:  rc.Config.ContainerWorkdir(),
+				Image:       image,
+				Username:    username,
+				Password:    password,
+				Name:        name,
+				Env:         envList,
+				Mounts:      mounts,
+				NetworkMode: "host",
+				Binds:       binds,
+				Stdout:      logWriter,
+				Stderr:      logWriter,
+				Privileged:  rc.Config.Privileged,
+				UsernsMode:  rc.Config.UsernsMode,
+				Platform:    rc.Config.ContainerArchitecture,
+				Hostname:    cOpts.Hostname,
+			})
+		}
 
 		var copyWorkspace bool
 		var copyToPath string
@@ -384,50 +406,68 @@ func (rc *RunContext) platformImage() string {
 	return ""
 }
 
+type containerOptions struct {
+	addHost    *string
+	user       *string
+	hostname   *string
+	domainName *string
+	macAddress *string
+	entrypoint *string
+	cmd        *[]string
+	env        *[]string
+	tty        *bool
+	volume     *[]string
+}
+
 func (rc *RunContext) containerOptions() *container.Config {
 	c := rc.Run.Job().Container()
 	if c == nil {
-		return &container.Config{}
+		return nil
 	}
 
 	optionsFlags := pflag.NewFlagSet("container_options", pflag.ContinueOnError)
 
-	_ = optionsFlags.StringP("add-host", "", "", "")
-	hostname := optionsFlags.StringP("hostname", "h", "", "")
+	opts := &containerOptions{}
+	optionsFlags.StringVarP(opts.user, "user", "u", "", "")
+	optionsFlags.StringVarP(opts.hostname, "hostname", "h", "", "")
+	optionsFlags.StringVarP(opts.macAddress, "mac-address", "", "", "")
+	optionsFlags.StringVarP(opts.entrypoint, "entrypoint", "", "", "")
+	optionsFlags.StringArrayVarP(opts.volume, "volume", "v", nil, "")
 
 	optionsArgs, err := shlex.Split(c.Options)
 	if err != nil {
 		log.Warnf("Cannot parse container options: %s", c.Options)
-		return &container.Config{}
+		return nil
 	}
 	err = optionsFlags.Parse(optionsArgs)
 	if err != nil {
 		log.Warnf("Cannot parse container options: %s", c.Options)
-		return &container.Config{}
+		return nil
 	}
+
+	if len(*opts.cmd) == 0 && *opts.entrypoint == "" {
+		*opts.entrypoint = "/usr/bin/tail"
+		*opts.cmd = []string{"-f", "/dev/null"}
+	}
+
 	return &container.Config{
-		Hostname:        *hostname,
+		Hostname:        *opts.hostname,
 		Domainname:      "",
-		User:            "",
+		User:            *opts.user,
 		AttachStdin:     false,
 		AttachStdout:    false,
 		AttachStderr:    false,
-		Tty:             false,
+		Tty:             *opts.tty,
 		OpenStdin:       false,
 		StdinOnce:       false,
-		Env:             []string{},
-		Cmd:             []string{},
-		ArgsEscaped:     false,
-		Image:           "",
+		Env:             *opts.env,
+		Cmd:             *opts.cmd,
 		Volumes:         map[string]struct{}{},
 		WorkingDir:      "",
 		Entrypoint:      []string{},
 		NetworkDisabled: false,
-		MacAddress:      "",
-		OnBuild:         []string{},
+		MacAddress:      *opts.macAddress,
 		Labels:          map[string]string{},
-		StopSignal:      "",
-		StopTimeout:     new(int),
 		Shell:           []string{},
 	}
 }

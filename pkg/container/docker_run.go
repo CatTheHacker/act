@@ -382,7 +382,6 @@ func (cr *containerReference) inspectImageConfig(inspect *Config) common.Executo
 	return func(ctx context.Context) error {
 		logger := common.Logger(ctx)
 
-		var err error
 		data, _, err := cr.cli.ImageInspectWithRaw(ctx, cr.input.Image)
 		if err != nil {
 			logger.Error(err)
@@ -526,7 +525,7 @@ func (cr *containerReference) extractNodePath(ver string, path *string) common.E
 		s := bufio.NewScanner(execAttach.Reader)
 
 		for s.Scan() {
-			log.Debugf("🐳 🐳 🐳 🐳 CONTAINER NODE FINDING : %s", s.Text())
+			log.Debugf("🐳 🐳 🐳 🐳 TEST CONTAINER NODE FINDING : %s", s.Text())
 		}
 
 		path = &p
